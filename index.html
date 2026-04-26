@@ -16,6 +16,7 @@
   })();
 </script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; background: #fafafa; }
@@ -50,7 +51,16 @@
     .dept-content:first-of-type { page-break-before: auto; }
     .dept-print-title { display: block !important; }
     .drag-handle { display: none !important; }
+    footer { display: none !important; }
   }
+  body.exporting .no-print { display: none !important; }
+  body.exporting .dept-content { display: block !important; padding-top: 24px; }
+  body.exporting .dept-content:first-of-type { padding-top: 0; }
+  body.exporting .dept-content:not(:first-of-type) { page-break-before: always; break-before: page; }
+  body.exporting .dept-print-title { display: block !important; }
+  body.exporting .drag-handle { display: none !important; }
+  body.exporting .sticky { position: static !important; }
+  body.exporting footer { display: none !important; }
   .dept-print-title { display: none; }
 </style>
 </head>
@@ -870,6 +880,52 @@ function resetAll() {
 }
 
 // ============================================================
+// EXPORT PDF
+// ============================================================
+function exportPDF() {
+  // Fallback si la librería no cargó (CDN bloqueado, etc.)
+  if (typeof html2pdf === 'undefined') {
+    window.print();
+    return;
+  }
+
+  var btn = document.querySelector('[data-action="print"]');
+  var originalHTML = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = ICON.print + '<span class="hidden sm:inline">Generando…</span>';
+  }
+
+  var scrollY = window.scrollY;
+  document.body.classList.add('exporting');
+  window.scrollTo(0, 0);
+
+  // Esperar al re-layout antes de capturar
+  setTimeout(function() {
+    var element = document.getElementById('root');
+    var fileName = 'weekly-review-' + new Date().toISOString().slice(0, 10) + '.pdf';
+
+    html2pdf().set({
+      margin:      [10, 10, 10, 10],
+      filename:    fileName,
+      image:       { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 1280 },
+      jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
+      pagebreak:   { mode: ['css', 'legacy'] }
+    }).from(element).save().then(function() {
+      document.body.classList.remove('exporting');
+      window.scrollTo(0, scrollY);
+      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+    }).catch(function(err) {
+      document.body.classList.remove('exporting');
+      window.scrollTo(0, scrollY);
+      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+      alert('Error al generar el PDF: ' + (err.message || err));
+    });
+  }, 150);
+}
+
+// ============================================================
 // EVENT DELEGATION
 // ============================================================
 var eventsAttached = false;
@@ -902,7 +958,7 @@ function attachEvents() {
       case 'delete-funnel-stage':deleteFunnelStage(dept, idx); break;
       case 'add-dept':           addDept(); break;
       case 'delete-dept':        deleteDept(btn.dataset.key); break;
-      case 'print':              window.print(); break;
+      case 'print':              exportPDF(); break;
       case 'logout':             logout(); break;
       case 'reset':              resetAll(); break;
     }
