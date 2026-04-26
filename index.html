@@ -904,11 +904,11 @@ function exportPDF() {
     var fileName = 'weekly-review-' + new Date().toISOString().slice(0, 10) + '.pdf';
 
     html2pdf().set({
-      margin:      [10, 10, 10, 10],
+      margin:      [10, 12, 10, 12],
       filename:    fileName,
       image:       { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 1280 },
-      jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
+      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 1400 },
+      jsPDF:       { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
       pagebreak:   { mode: ['css', 'legacy'] }
     }).from(element).save().then(function() {
       document.body.classList.remove('exporting');
