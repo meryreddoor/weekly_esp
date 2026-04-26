@@ -718,18 +718,16 @@ function renderTabsInner() {
   return state.deptOrder.map(function(key) {
     var d = state.departments[key];
     var active = state.activeDept === key;
-    var tabClass = 'group/tab relative flex items-baseline gap-2 py-4 -mb-px border-b-2 text-sm transition-colors whitespace-nowrap select-none ' +
-      (active ? 'border-slate-900 text-slate-900 font-medium' : 'border-transparent text-slate-500 hover:text-slate-900');
-    return '<div draggable="true" data-drag-type="tab" data-drag-key="' + key + '" class="' + tabClass + '">' +
+    var tabClass = 'group/tab relative flex items-baseline gap-2 px-4 py-4 -mb-px border-b-2 text-sm transition-all whitespace-nowrap select-none cursor-pointer rounded-t-md ' +
+      (active ? 'border-slate-900 text-slate-900 font-medium' : 'border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-100/60');
+    return '<div draggable="true" data-drag-type="tab" data-drag-key="' + key + '" data-action="set-tab" data-tab="' + key + '" class="' + tabClass + '">' +
       '<span class="drag-handle no-print text-slate-300" title="Arrastrar pestaña">' + ICON.gripH + '</span>' +
-      '<button data-action="set-tab" data-tab="' + key + '" class="flex items-baseline gap-2">' +
-        '<span class="text-[10px] text-slate-400 uppercase tracking-widest"><span contenteditable="true" data-edit="departments.' + key + '.number" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.number) + '</span></span>' +
-        '<span><span contenteditable="true" data-edit="departments.' + key + '.name" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.name) + '</span></span>' +
-      '</button>' +
-      (state.deptOrder.length > 1 ? '<button data-action="delete-dept" data-key="' + key + '" class="opacity-0 group-hover/tab:opacity-100 text-slate-300 hover:text-rose-500 transition-all -ml-1 no-print" title="Eliminar área">' + ICON.trash + '</button>' : '') +
+      '<span class="text-[10px] text-slate-400 uppercase tracking-widest"><span contenteditable="true" data-edit="departments.' + key + '.number" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.number) + '</span></span>' +
+      '<span><span contenteditable="true" data-edit="departments.' + key + '.name" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.name) + '</span></span>' +
+      (state.deptOrder.length > 1 ? '<button data-action="delete-dept" data-key="' + key + '" class="opacity-0 group-hover/tab:opacity-100 text-slate-300 hover:text-rose-500 transition-all ml-1 no-print" title="Eliminar área">' + ICON.trash + '</button>' : '') +
     '</div>';
   }).join('') +
-  '<button data-action="add-dept" class="flex items-center gap-1 py-4 text-sm text-slate-400 hover:text-slate-900 transition-colors whitespace-nowrap no-print">' + ICON.plus + ' Añadir área</button>';
+  '<button data-action="add-dept" class="flex items-center gap-1 px-4 py-4 text-sm text-slate-400 hover:text-slate-900 transition-colors whitespace-nowrap no-print">' + ICON.plus + ' Añadir área</button>';
 }
 
 function renderDeptAreaInner() {
@@ -935,17 +933,32 @@ function attachEvents() {
   var root = $('#root');
 
   root.addEventListener('click', function(e) {
-    if (e.target.closest('[contenteditable="true"]')) return;
     var btn = e.target.closest('[data-action]');
     if (!btn || btn.tagName === 'SELECT') return;
     var action = btn.dataset.action;
+
+    // Tab switching: funciona aunque clic sea sobre un editable.
+    // Si la pestaña ya está activa, dejamos pasar (edición inline).
+    if (action === 'set-tab') {
+      var tabKey = btn.dataset.tab;
+      if (state.activeDept !== tabKey) {
+        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+          document.activeElement.blur();
+        }
+        setActiveDept(tabKey);
+      }
+      return;
+    }
+
+    // Para el resto de acciones, ignorar clics sobre contenteditable
+    if (e.target.closest('[contenteditable="true"]')) return;
+
     var dept = btn.dataset.dept;
     var idx = parseInt(btn.dataset.idx);
     var sIdx = parseInt(btn.dataset.sectionIdx);
     var iIdx = parseInt(btn.dataset.itemIdx);
 
     switch (action) {
-      case 'set-tab':            setActiveDept(btn.dataset.tab); break;
       case 'delete-kpi':         deleteKpi(dept, idx); break;
       case 'add-kpi':            addKpi(dept); break;
       case 'toggle-trend':       toggleTrend(dept, idx); break;
