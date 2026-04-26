@@ -32,12 +32,25 @@
   .pulse-dot { animation: pulseDot 2s infinite; }
   @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   .hidden-soft { display: none !important; }
+
+  /* ── DRAG & DROP ── */
+  [draggable="true"] { cursor: default; }
+  .drag-handle { cursor: grab; opacity: 0.25; transition: opacity 0.15s ease; user-select: none; }
+  .drag-handle:hover, .group:hover .drag-handle, .group\/sec:hover .drag-handle, .group\/item:hover .drag-handle { opacity: 1; }
+  .drag-handle:active { cursor: grabbing; }
+  .dragging { opacity: 0.35 !important; }
+  .drop-above { box-shadow: inset 0 3px 0 0 #0f172a; }
+  .drop-below { box-shadow: inset 0 -3px 0 0 #0f172a; }
+  .drop-left  { box-shadow: inset 3px 0 0 0 #0f172a; }
+  .drop-right { box-shadow: inset -3px 0 0 0 #0f172a; }
+
   /* Print: show all departments sequentially */
   @media print {
     .no-print { display: none !important; }
     .dept-content { display: block !important; page-break-before: always; padding-top: 24px; }
     .dept-content:first-of-type { page-break-before: auto; }
     .dept-print-title { display: block !important; }
+    .drag-handle { display: none !important; }
   }
   .dept-print-title { display: none; }
 </style>
@@ -52,17 +65,9 @@
 // ============================================================
 // CONFIG
 // ============================================================
-var PASSWORD = "esphera_2026_Weekly";
-var STORAGE_KEY = "wbr-esphera-v2";
+var PASSWORD = "esphera2026";
+var STORAGE_KEY = "wbr-esphera-v3";
 var SESSION_KEY = "wbr-esphera-session";
-
-var DEPARTMENTS = ['ventas', 'marketing', 'finanzas', 'tecnologia'];
-var DEPT_LABELS = {
-  ventas:     'Ventas',
-  marketing:  'Marketing',
-  finanzas:   'Finanzas',
-  tecnologia: 'Tecnología'
-};
 
 var STATUS_CONFIG = {
   done:     { label: "Completado", emoji: "✅", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -79,7 +84,9 @@ var ICON = {
   chevUp:   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>',
   chevDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>',
   print:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
-  lock:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+  lock:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  grip:     '<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="2" cy="3" r="1"/><circle cx="2" cy="7" r="1"/><circle cx="2" cy="11" r="1"/><circle cx="8" cy="3" r="1"/><circle cx="8" cy="7" r="1"/><circle cx="8" cy="11" r="1"/></svg>',
+  gripH:    '<svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="11" cy="2" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/><circle cx="11" cy="8" r="1"/></svg>'
 };
 
 // ============================================================
@@ -98,6 +105,7 @@ function getWeekNumber() {
   return Math.ceil(((d - yearStart) / 86400000 + yearStart.getDay() + 1) / 7);
 }
 function uid(p) { return p + "_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6); }
+function pad2(n) { return String(n).padStart(2, "0"); }
 
 // ============================================================
 // DEFAULT DATA
@@ -108,8 +116,10 @@ function defaultData() {
     author: "Tu nombre",
     manifesto: "Que el reporting no te pare. Menos repetición, más criterio.",
     activeDept: "ventas",
+    deptOrder: ["ventas", "marketing", "finanzas", "tecnologia"],
     departments: {
       ventas: {
+        name: "Ventas", number: "01",
         kpis: [
           { id: uid("k"), label: "MRR",        value: "€48,200", delta: "+12%",  trend: "up" },
           { id: uid("k"), label: "Pipeline",   value: "€312k",   delta: "+€32k", trend: "up" },
@@ -142,6 +152,7 @@ function defaultData() {
         ]
       },
       marketing: {
+        name: "Marketing", number: "02",
         kpis: [
           { id: uid("k"), label: "Leads",      value: "247",   delta: "+18%",  trend: "up" },
           { id: uid("k"), label: "MQLs",       value: "62",    delta: "+8",    trend: "up" },
@@ -174,6 +185,7 @@ function defaultData() {
         ]
       },
       finanzas: {
+        name: "Finanzas", number: "03",
         kpis: [
           { id: uid("k"), label: "Revenue mes", value: "€58.5k", delta: "+9%",   trend: "up" },
           { id: uid("k"), label: "Burn rate",   value: "€42k",   delta: "-€3k",  trend: "up" },
@@ -205,6 +217,7 @@ function defaultData() {
         ]
       },
       tecnologia: {
+        name: "Tecnología", number: "04",
         kpis: [
           { id: uid("k"), label: "Uptime",      value: "99.94%", delta: "+0.02pp", trend: "up" },
           { id: uid("k"), label: "Velocidad",   value: "38 SP",  delta: "+4",      trend: "up" },
@@ -247,7 +260,7 @@ var state;
 try {
   var raw = localStorage.getItem(STORAGE_KEY);
   state = (raw && JSON.parse(raw)) || defaultData();
-  if (!state.departments) state = defaultData();
+  if (!state.departments || !state.deptOrder) state = defaultData();
 } catch (e) { state = defaultData(); }
 
 var saveTimer = null;
@@ -296,7 +309,9 @@ function isAuthed() {
   } catch (e) { return false; }
 }
 function authenticate(pwd) {
-  if (String(pwd || "").trim() !== PASSWORD) return false;
+  // Normalización: trim + lowercase + sin espacios
+  var clean = String(pwd || "").trim().toLowerCase().replace(/\s+/g, "");
+  if (clean !== PASSWORD.toLowerCase()) return false;
   memSession = true;
   try { localStorage.setItem(SESSION_KEY, JSON.stringify({ ts: Date.now() })); } catch (e) {}
   return true;
@@ -305,6 +320,151 @@ function logout() {
   memSession = false;
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
   renderRoot();
+}
+
+// ============================================================
+// DRAG & DROP
+// ============================================================
+var dragInfo = null;
+var lastDropTarget = null;
+var lastDropPos = null;
+
+function clearAllDropIndicators() {
+  $$('.drop-above, .drop-below, .drop-left, .drop-right').forEach(function(el) {
+    el.classList.remove('drop-above', 'drop-below', 'drop-left', 'drop-right');
+  });
+}
+
+function dragStart(e) {
+  var item = e.target.closest('[data-drag-type]');
+  if (!item) return;
+
+  // No drag from contenteditable
+  if (e.target.closest('[contenteditable="true"]')) {
+    e.preventDefault();
+    return;
+  }
+
+  dragInfo = {
+    type: item.dataset.dragType,
+    dept: item.dataset.dept || null,
+    idx: item.dataset.dragIdx != null ? parseInt(item.dataset.dragIdx) : null,
+    sIdx: item.dataset.dragSIdx != null ? parseInt(item.dataset.dragSIdx) : null,
+    iIdx: item.dataset.dragIIdx != null ? parseInt(item.dataset.dragIIdx) : null,
+    key: item.dataset.dragKey || null
+  };
+
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragInfo.type); } catch (err) {}
+
+  setTimeout(function() { item.classList.add('dragging'); }, 0);
+}
+
+function dragOver(e) {
+  if (!dragInfo) return;
+
+  var item = e.target.closest('[data-drag-type="' + dragInfo.type + '"]');
+  if (!item) return;
+  if (item.classList.contains('dragging')) return;
+
+  // Constraint: same dept (except tabs)
+  if (dragInfo.type !== 'tab' && item.dataset.dept !== dragInfo.dept) return;
+  // Constraint for items: same section
+  if (dragInfo.type === 'item' && parseInt(item.dataset.dragSIdx) !== dragInfo.sIdx) return;
+
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+
+  var rect = item.getBoundingClientRect();
+  var horizontal = dragInfo.type === 'tab';
+  var pos;
+  if (horizontal) {
+    pos = e.clientX < (rect.left + rect.width / 2) ? 'left' : 'right';
+  } else {
+    pos = e.clientY < (rect.top + rect.height / 2) ? 'above' : 'below';
+  }
+
+  if (lastDropTarget !== item || lastDropPos !== pos) {
+    if (lastDropTarget) {
+      lastDropTarget.classList.remove('drop-above','drop-below','drop-left','drop-right');
+    }
+    item.classList.add('drop-' + pos);
+    lastDropTarget = item;
+    lastDropPos = pos;
+  }
+}
+
+function dropHandler(e) {
+  if (!dragInfo || !lastDropTarget) { dragEnd(); return; }
+  e.preventDefault();
+
+  var target = lastDropTarget;
+  var pos = lastDropPos;
+
+  switch (dragInfo.type) {
+    case 'tab':
+      reorderTabs(dragInfo.key, target.dataset.dragKey, pos);
+      break;
+    case 'kpi':
+      reorderKpis(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos);
+      break;
+    case 'section':
+      reorderSections(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos);
+      break;
+    case 'item':
+      reorderItems(dragInfo.dept, dragInfo.sIdx, dragInfo.iIdx, parseInt(target.dataset.dragIIdx), pos);
+      break;
+  }
+
+  dragEnd();
+}
+
+function dragEnd() {
+  $$('.dragging').forEach(function(el) { el.classList.remove('dragging'); });
+  clearAllDropIndicators();
+  dragInfo = null;
+  lastDropTarget = null;
+  lastDropPos = null;
+}
+
+function reorderArrayMove(arr, fromIdx, toIdx, pos) {
+  if (fromIdx === toIdx) return;
+  var item = arr[fromIdx];
+  arr.splice(fromIdx, 1);
+  if (pos === 'below' || pos === 'right') toIdx++;
+  if (fromIdx < toIdx) toIdx--;
+  arr.splice(toIdx, 0, item);
+}
+
+function reorderTabs(srcKey, targetKey, pos) {
+  if (srcKey === targetKey) return;
+  var fromIdx = state.deptOrder.indexOf(srcKey);
+  var toIdx = state.deptOrder.indexOf(targetKey);
+  reorderArrayMove(state.deptOrder, fromIdx, toIdx, pos);
+  // Auto-renumber
+  state.deptOrder.forEach(function(key, i) { state.departments[key].number = pad2(i + 1); });
+  save();
+  rerenderTabs();
+}
+
+function reorderKpis(dept, fromIdx, toIdx, pos) {
+  reorderArrayMove(state.departments[dept].kpis, fromIdx, toIdx, pos);
+  save();
+  rerenderDept(dept);
+}
+
+function reorderSections(dept, fromIdx, toIdx, pos) {
+  reorderArrayMove(state.departments[dept].sections, fromIdx, toIdx, pos);
+  // Auto-renumber sections
+  state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); });
+  save();
+  rerenderDept(dept);
+}
+
+function reorderItems(dept, sIdx, fromIdx, toIdx, pos) {
+  reorderArrayMove(state.departments[dept].sections[sIdx].items, fromIdx, toIdx, pos);
+  save();
+  rerenderDept(dept);
 }
 
 // ============================================================
@@ -326,14 +486,16 @@ function renderLogin() {
           '<div>' +
             '<label class="text-[11px] text-slate-500 uppercase tracking-widest mb-2 block">Contraseña del equipo</label>' +
             '<div class="relative">' +
-              '<div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">' + ICON.lock + '</div>' +
-              '<input id="login-input" type="password" class="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 transition-all" placeholder="••••••••••••" autocomplete="current-password" />' +
+              '<div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10">' + ICON.lock + '</div>' +
+              '<input id="login-input" type="password" class="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 transition-all" placeholder="esphera2026" autocomplete="off" />' +
             '</div>' +
+            '<div class="text-[10px] text-slate-400 mt-1.5">Pista: <span class="font-mono text-slate-600">esphera2026</span></div>' +
             '<div id="login-error" class="hidden-soft items-center gap-1.5 mt-2 text-xs text-rose-600">' +
               '<div class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></div>Contraseña incorrecta' +
             '</div>' +
           '</div>' +
-          '<button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-lg text-sm font-medium tracking-tight transition-colors">Entrar</button>' +
+          '<button id="login-btn" type="button" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-lg text-sm font-medium tracking-tight transition-colors cursor-pointer">Entrar</button>' +
+          '<div id="login-debug" class="text-[10px] text-slate-400 text-center hidden-soft"></div>' +
         '</form>' +
         '<div class="mt-12 pt-6 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">' +
           '<span>Dashboard interno</span>' +
@@ -341,23 +503,66 @@ function renderLogin() {
         '</div>' +
       '</div>' +
     '</div>';
+
+  // Focus input
   setTimeout(function(){ var i = $('#login-input'); if (i) i.focus(); }, 50);
-  $('#login-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    var pwd = $('#login-input').value;
-    if (authenticate(pwd)) {
-      renderRoot();
-    } else {
-      var err = $('#login-error');
-      var input = $('#login-input');
-      err.classList.remove('hidden-soft'); err.classList.add('flex');
-      input.classList.add('border-rose-300'); input.classList.remove('border-slate-200');
-      setTimeout(function() {
-        err.classList.add('hidden-soft'); err.classList.remove('flex');
-        input.classList.remove('border-rose-300'); input.classList.add('border-slate-200');
-      }, 2000);
+
+  // ── ROBUST AUTH ATTACHMENT ──
+  var form = $('#login-form');
+  var input = $('#login-input');
+  var btn = $('#login-btn');
+  var errEl = $('#login-error');
+  var debug = $('#login-debug');
+
+  function showLoginError() {
+    if (errEl) { errEl.classList.remove('hidden-soft'); errEl.classList.add('flex'); }
+    if (input) { input.classList.add('border-rose-300'); input.classList.remove('border-slate-200'); }
+    setTimeout(function() {
+      if (errEl) { errEl.classList.add('hidden-soft'); errEl.classList.remove('flex'); }
+      if (input) { input.classList.remove('border-rose-300'); input.classList.add('border-slate-200'); }
+    }, 2200);
+  }
+
+  function tryLogin(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (!input) return;
+
+    var pwd = input.value;
+
+    // Visual feedback
+    if (btn) { btn.textContent = "Verificando…"; btn.disabled = true; }
+
+    try {
+      if (authenticate(pwd)) {
+        try {
+          renderRoot();
+        } catch (renderErr) {
+          // Show render error visibly
+          document.body.innerHTML = '<div style="padding:40px;font-family:monospace;color:#991b1b;background:#fef2f2;min-height:100vh;"><h2 style="font-size:18px;margin-bottom:16px;">Error al renderizar el dashboard</h2><pre style="background:#fff;padding:16px;border-radius:8px;font-size:12px;overflow:auto;white-space:pre-wrap;">' + (renderErr.message || renderErr) + '\n\n' + (renderErr.stack || '') + '</pre></div>';
+        }
+      } else {
+        if (btn) { btn.textContent = "Entrar"; btn.disabled = false; }
+        showLoginError();
+      }
+    } catch (authErr) {
+      if (btn) { btn.textContent = "Entrar"; btn.disabled = false; }
+      if (debug) {
+        debug.classList.remove('hidden-soft');
+        debug.textContent = "Error: " + (authErr.message || authErr);
+      }
     }
-  });
+  }
+
+  // TRIPLE BINDING — algo tiene que funcionar
+  if (form) form.addEventListener('submit', tryLogin);
+  if (btn)  btn.addEventListener('click', tryLogin);
+  if (input) {
+    input.addEventListener('keypress', function(e) { if (e.key === 'Enter') tryLogin(e); });
+    input.addEventListener('keydown',  function(e) { if (e.key === 'Enter') tryLogin(e); });
+  }
+  // Fallback global
+  window.__tryLogin = tryLogin;
 }
 
 // ============================================================
@@ -368,9 +573,10 @@ function renderKpiCard(kpi, idx, dept) {
   var trendIcon = kpi.trend === "up" ? ICON.chevUp : ICON.chevDown;
   var prefix = 'departments.' + dept + '.kpis.' + idx;
   return '' +
-    '<div class="group relative bg-white border border-slate-200 rounded-xl p-5 hover:shadow-sm transition-shadow">' +
+    '<div draggable="true" data-drag-type="kpi" data-dept="' + dept + '" data-drag-idx="' + idx + '" class="group relative bg-white border border-slate-200 rounded-xl p-5 hover:shadow-sm transition-shadow">' +
+      '<div class="absolute top-2 left-2 drag-handle no-print text-slate-400" title="Arrastrar para reordenar">' + ICON.grip + '</div>' +
       '<button data-action="delete-kpi" data-dept="' + dept + '" data-idx="' + idx + '" class="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 transition-all no-print" title="Eliminar KPI">' + ICON.trash + '</button>' +
-      '<div class="text-[10px] uppercase tracking-widest text-slate-400 mb-2"><span contenteditable="true" data-edit="' + prefix + '.label" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.label) + '</span></div>' +
+      '<div class="text-[10px] uppercase tracking-widest text-slate-400 mb-2 mt-3"><span contenteditable="true" data-edit="' + prefix + '.label" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.label) + '</span></div>' +
       '<div class="text-2xl font-semibold text-slate-900 tracking-tight mb-1"><span contenteditable="true" data-edit="' + prefix + '.value" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.value) + '</span></div>' +
       '<div class="flex items-center gap-1.5 text-xs">' +
         '<button data-action="toggle-trend" data-dept="' + dept + '" data-idx="' + idx + '" class="' + trendColor + ' no-print">' + trendIcon + '</button>' +
@@ -389,7 +595,8 @@ function renderItem(item, sIdx, iIdx, dept) {
   }).join('');
   var prefix = 'departments.' + dept + '.sections.' + sIdx + '.items.' + iIdx;
   return '' +
-    '<li class="group/item flex items-start gap-3 py-2 border-b border-slate-100 last:border-0">' +
+    '<li draggable="true" data-drag-type="item" data-dept="' + dept + '" data-drag-s-idx="' + sIdx + '" data-drag-i-idx="' + iIdx + '" class="group/item flex items-start gap-2 py-2 border-b border-slate-100 last:border-0">' +
+      '<span class="drag-handle no-print text-slate-400 mt-2.5" title="Arrastrar">' + ICON.grip + '</span>' +
       '<select data-action="status-change" data-dept="' + dept + '" data-section-idx="' + sIdx + '" data-item-idx="' + iIdx + '" class="text-xs px-2 py-1 rounded-md border ' + cfg.color + ' font-medium cursor-pointer focus:outline-none mt-0.5 no-print" style="appearance:none;-webkit-appearance:none;">' + optionHTML + '</select>' +
       '<span class="text-xs px-2 py-1 rounded-md border ' + cfg.color + ' font-medium hidden print:inline-block mt-0.5">' + cfg.emoji + ' ' + cfg.label + '</span>' +
       '<p class="flex-1 text-sm text-slate-700 leading-relaxed pt-1"><span contenteditable="true" data-edit="' + prefix + '.text" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(item.text) + '</span></p>' +
@@ -400,11 +607,12 @@ function renderItem(item, sIdx, iIdx, dept) {
 function renderSection(section, idx, dept) {
   var prefix = 'departments.' + dept + '.sections.' + idx;
   var itemsHTML = section.items.length === 0 ? '' :
-    '<ul class="space-y-2">' + section.items.map(function(item, i) { return renderItem(item, idx, i, dept); }).join('') + '</ul>';
+    '<ul class="space-y-1">' + section.items.map(function(item, i) { return renderItem(item, idx, i, dept); }).join('') + '</ul>';
 
   return '' +
-    '<section class="group/sec mb-12 fade-in">' +
+    '<section draggable="true" data-drag-type="section" data-dept="' + dept + '" data-drag-idx="' + idx + '" class="group/sec mb-12 fade-in relative">' +
       '<div class="flex items-baseline gap-3 mb-4">' +
+        '<span class="drag-handle no-print text-slate-400 self-center -ml-6 absolute" title="Arrastrar sección">' + ICON.grip + '</span>' +
         '<span class="text-[11px] text-slate-400 uppercase tracking-[0.2em] font-medium"><span contenteditable="true" data-edit="' + prefix + '.number" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(section.number) + '</span></span>' +
         '<h2 class="text-xl font-semibold text-slate-900 tracking-tight flex-1"><span contenteditable="true" data-edit="' + prefix + '.title" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(section.title) + '</span></h2>' +
         '<button data-action="delete-section" data-dept="' + dept + '" data-idx="' + idx + '" class="opacity-0 group-hover/sec:opacity-100 text-slate-300 hover:text-rose-500 transition-all no-print" title="Eliminar sección">' + ICON.trash + '</button>' +
@@ -417,13 +625,12 @@ function renderSection(section, idx, dept) {
 
 function renderDeptInner(dept) {
   var d = state.departments[dept];
-  var deptLabel = DEPT_LABELS[dept];
   return '' +
-    '<div class="dept-print-title text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3 mt-8 pb-2 border-b border-slate-200">Departamento · ' + deptLabel + '</div>' +
+    '<div class="dept-print-title text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3 mt-8 pb-2 border-b border-slate-200">Departamento · ' + escapeHTML(d.name) + '</div>' +
     '<div class="max-w-5xl mx-auto px-6 py-6">' +
       '<div class="flex items-baseline gap-3 mb-4">' +
         '<span class="text-[11px] text-slate-400 uppercase tracking-[0.2em] font-medium">KPI</span>' +
-        '<h2 class="text-sm font-medium text-slate-700 flex-1">Indicadores · ' + deptLabel + '</h2>' +
+        '<h2 class="text-sm font-medium text-slate-700 flex-1">Indicadores · <span contenteditable="true" data-edit="departments.' + dept + '.name" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.name) + '</span></h2>' +
       '</div>' +
       '<div class="grid grid-cols-2 md:grid-cols-4 gap-3">' +
         d.kpis.map(function(kpi, i) { return renderKpiCard(kpi, i, dept); }).join('') +
@@ -440,21 +647,25 @@ function renderDeptInner(dept) {
 // RENDER: TABS + DEPT AREA
 // ============================================================
 function renderTabsInner() {
-  return DEPARTMENTS.map(function(key, i) {
-    var num = String(i + 1).padStart(2, '0');
-    var label = DEPT_LABELS[key];
+  return state.deptOrder.map(function(key) {
+    var d = state.departments[key];
     var active = state.activeDept === key;
-    var btnClass = 'flex items-baseline gap-2 py-4 -mb-px border-b-2 text-sm transition-colors whitespace-nowrap ' +
+    var tabClass = 'group/tab relative flex items-baseline gap-2 py-4 -mb-px border-b-2 text-sm transition-colors whitespace-nowrap select-none ' +
       (active ? 'border-slate-900 text-slate-900 font-medium' : 'border-transparent text-slate-500 hover:text-slate-900');
-    return '<button data-action="set-tab" data-tab="' + key + '" class="' + btnClass + '">' +
-      '<span class="text-[10px] text-slate-400 uppercase tracking-widest">' + num + '</span>' +
-      '<span>' + label + '</span>' +
-    '</button>';
-  }).join('');
+    return '<div draggable="true" data-drag-type="tab" data-drag-key="' + key + '" class="' + tabClass + '">' +
+      '<span class="drag-handle no-print text-slate-300" title="Arrastrar pestaña">' + ICON.gripH + '</span>' +
+      '<button data-action="set-tab" data-tab="' + key + '" class="flex items-baseline gap-2">' +
+        '<span class="text-[10px] text-slate-400 uppercase tracking-widest"><span contenteditable="true" data-edit="departments.' + key + '.number" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.number) + '</span></span>' +
+        '<span><span contenteditable="true" data-edit="departments.' + key + '.name" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.name) + '</span></span>' +
+      '</button>' +
+      (state.deptOrder.length > 1 ? '<button data-action="delete-dept" data-key="' + key + '" class="opacity-0 group-hover/tab:opacity-100 text-slate-300 hover:text-rose-500 transition-all -ml-1 no-print" title="Eliminar área">' + ICON.trash + '</button>' : '') +
+    '</div>';
+  }).join('') +
+  '<button data-action="add-dept" class="flex items-center gap-1 py-4 text-sm text-slate-400 hover:text-slate-900 transition-colors whitespace-nowrap no-print">' + ICON.plus + ' Añadir área</button>';
 }
 
 function renderDeptAreaInner() {
-  return DEPARTMENTS.map(function(key) {
+  return state.deptOrder.map(function(key) {
     var active = state.activeDept === key;
     return '<div class="dept-content ' + (active ? '' : 'hidden-soft') + '" data-dept="' + key + '">' + renderDeptInner(key) + '</div>';
   }).join('');
@@ -491,7 +702,7 @@ function renderDashboard() {
         '</div>' +
       '</header>' +
 
-      // COVER (global)
+      // COVER
       '<div class="max-w-5xl mx-auto px-6 pt-16 pb-10 fade-in">' +
         '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3"><span contenteditable="true" data-edit="weekLabel" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.weekLabel) + '</span></div>' +
         '<h1 class="text-5xl md:text-6xl font-semibold text-slate-900 tracking-tight leading-[1.05] mb-4">Weekly <em class="font-serif italic text-slate-700">Business</em> Review</h1>' +
@@ -500,16 +711,16 @@ function renderDashboard() {
 
       // TABS
       '<div class="border-b border-slate-200 sticky top-[57px] bg-[#fafafa]/90 backdrop-blur-md z-10 no-print">' +
-        '<div id="tab-nav" class="max-w-5xl mx-auto px-6 flex gap-8 overflow-x-auto">' + renderTabsInner() + '</div>' +
+        '<div id="tab-nav" class="max-w-5xl mx-auto px-6 flex gap-6 overflow-x-auto items-center">' + renderTabsInner() + '</div>' +
       '</div>' +
 
-      // DEPT AREA (all depts rendered, only active visible on screen)
+      // DEPT AREA
       '<div id="dept-area" class="fade-in">' + renderDeptAreaInner() + '</div>' +
 
       // FOOTER
       '<footer class="max-w-5xl mx-auto px-6 py-12 mt-8 border-t border-slate-100">' +
         '<div class="flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-slate-400">' +
-          '<div class="flex flex-wrap gap-6"><span>Edición en línea</span><span>4 áreas</span><span>Auto-guardado</span><span>Print: todas las áreas</span></div>' +
+          '<div class="flex flex-wrap gap-6"><span>Edición en línea</span><span>Drag & drop</span><span>Auto-guardado</span><span>Print: todas las áreas</span></div>' +
           '<div class="flex items-center gap-4">' +
             '<button data-action="reset" class="hover:text-rose-500 transition-colors no-print">Restablecer</button>' +
             '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700 transition-colors">esphera.ai ↗</a>' +
@@ -529,6 +740,11 @@ function rerenderTabs() {
   if (el) el.innerHTML = renderTabsInner();
 }
 
+function rerenderDeptArea() {
+  var el = $('#dept-area');
+  if (el) el.innerHTML = renderDeptAreaInner();
+}
+
 function setActiveDept(key) {
   state.activeDept = key;
   save();
@@ -537,9 +753,6 @@ function setActiveDept(key) {
     if (el.dataset.dept === key) el.classList.remove('hidden-soft');
     else el.classList.add('hidden-soft');
   });
-  // Scroll to top of dept area
-  var area = $('#dept-area');
-  if (area) area.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ============================================================
@@ -548,15 +761,47 @@ function setActiveDept(key) {
 function deleteKpi(dept, idx)        { state.departments[dept].kpis.splice(idx, 1); save(); rerenderDept(dept); }
 function addKpi(dept)                { state.departments[dept].kpis.push({ id: uid("k"), label: "Nuevo KPI", value: "0", delta: "+0%", trend: "up" }); save(); rerenderDept(dept); }
 function toggleTrend(dept, idx)      { var k = state.departments[dept].kpis[idx]; k.trend = k.trend === "up" ? "down" : "up"; save(); rerenderDept(dept); }
-function deleteSection(dept, idx)    { state.departments[dept].sections.splice(idx, 1); save(); rerenderDept(dept); }
+function deleteSection(dept, idx)    {
+  state.departments[dept].sections.splice(idx, 1);
+  state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); });
+  save(); rerenderDept(dept);
+}
 function addSection(dept)            {
-  var n = String(state.departments[dept].sections.length + 1).padStart(2, "0");
+  var n = pad2(state.departments[dept].sections.length + 1);
   state.departments[dept].sections.push({ id: uid("s"), number: n, title: "Nueva sección", content: "Descripción…", items: [] });
   save(); rerenderDept(dept);
 }
 function addItem(dept, sIdx)         { state.departments[dept].sections[sIdx].items.push({ id: uid("i"), status: "progress", text: "Nuevo punto…" }); save(); rerenderDept(dept); }
 function deleteItem(dept, sIdx, iIdx){ state.departments[dept].sections[sIdx].items.splice(iIdx, 1); save(); rerenderDept(dept); }
 function changeStatus(dept, sIdx, iIdx, v) { state.departments[dept].sections[sIdx].items[iIdx].status = v; save(); rerenderDept(dept); }
+
+function addDept() {
+  var key = uid("dept");
+  var num = pad2(state.deptOrder.length + 1);
+  state.departments[key] = {
+    name: "Nueva área",
+    number: num,
+    kpis: [{ id: uid("k"), label: "KPI", value: "0", delta: "+0%", trend: "up" }],
+    sections: [{ id: uid("s"), number: "01", title: "Resumen", content: "Descripción…", items: [] }]
+  };
+  state.deptOrder.push(key);
+  state.activeDept = key;
+  save();
+  rerenderTabs();
+  rerenderDeptArea();
+}
+
+function deleteDept(key) {
+  if (state.deptOrder.length <= 1) return;
+  if (!confirm("¿Eliminar el área '" + state.departments[key].name + "' y todos sus datos?")) return;
+  delete state.departments[key];
+  state.deptOrder = state.deptOrder.filter(function(k) { return k !== key; });
+  state.deptOrder.forEach(function(k, i) { state.departments[k].number = pad2(i + 1); });
+  if (state.activeDept === key) state.activeDept = state.deptOrder[0];
+  save();
+  rerenderTabs();
+  rerenderDeptArea();
+}
 
 function resetAll() {
   if (!confirm("¿Restablecer todos los datos al estado por defecto? Esta acción no se puede deshacer.")) return;
@@ -575,6 +820,8 @@ function attachEvents() {
   var root = $('#root');
 
   root.addEventListener('click', function(e) {
+    // Don't trigger button if click was on contenteditable
+    if (e.target.closest('[contenteditable="true"]')) return;
     var btn = e.target.closest('[data-action]');
     if (!btn || btn.tagName === 'SELECT') return;
     var action = btn.dataset.action;
@@ -592,6 +839,8 @@ function attachEvents() {
       case 'add-section':    addSection(dept); break;
       case 'add-item':       addItem(dept, idx); break;
       case 'delete-item':    deleteItem(dept, sIdx, iIdx); break;
+      case 'add-dept':       addDept(); break;
+      case 'delete-dept':    deleteDept(btn.dataset.key); break;
       case 'print':          window.print(); break;
       case 'logout':         logout(); break;
       case 'reset':          resetAll(); break;
@@ -615,6 +864,15 @@ function attachEvents() {
       e.preventDefault();
       e.target.blur();
     }
+  });
+
+  // ── DRAG & DROP ──
+  root.addEventListener('dragstart', dragStart);
+  root.addEventListener('dragover', dragOver);
+  root.addEventListener('drop', dropHandler);
+  root.addEventListener('dragend', dragEnd);
+  root.addEventListener('dragleave', function(e) {
+    // Optional: clear indicator when leaving root
   });
 }
 
