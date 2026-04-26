@@ -33,10 +33,10 @@
   @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   .hidden-soft { display: none !important; }
 
-  /* ── DRAG & DROP ── */
+  /* DRAG & DROP */
   [draggable="true"] { cursor: default; }
   .drag-handle { cursor: grab; opacity: 0.25; transition: opacity 0.15s ease; user-select: none; }
-  .drag-handle:hover, .group:hover .drag-handle, .group\/sec:hover .drag-handle, .group\/item:hover .drag-handle { opacity: 1; }
+  .drag-handle:hover, .group:hover .drag-handle, .group\/sec:hover .drag-handle, .group\/item:hover .drag-handle, .group\/stage:hover .drag-handle { opacity: 1; }
   .drag-handle:active { cursor: grabbing; }
   .dragging { opacity: 0.35 !important; }
   .drop-above { box-shadow: inset 0 3px 0 0 #0f172a; }
@@ -44,7 +44,6 @@
   .drop-left  { box-shadow: inset 3px 0 0 0 #0f172a; }
   .drop-right { box-shadow: inset -3px 0 0 0 #0f172a; }
 
-  /* Print: show all departments sequentially */
   @media print {
     .no-print { display: none !important; }
     .dept-content { display: block !important; page-break-before: always; padding-top: 24px; }
@@ -75,9 +74,6 @@ var STATUS_CONFIG = {
   blocked:  { label: "Bloqueado",  emoji: "🚫", color: "bg-rose-50 text-rose-700 border-rose-200" }
 };
 
-// ============================================================
-// ICONS
-// ============================================================
 var ICON = {
   plus:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
   trash:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
@@ -106,6 +102,10 @@ function getWeekNumber() {
 }
 function uid(p) { return p + "_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6); }
 function pad2(n) { return String(n).padStart(2, "0"); }
+function pct(num, denom) {
+  if (!denom || denom <= 0) return '—';
+  return Math.round((num / denom) * 100) + '%';
+}
 
 // ============================================================
 // DEFAULT DATA
@@ -120,6 +120,16 @@ function defaultData() {
     departments: {
       ventas: {
         name: "Ventas", number: "01",
+        funnel: {
+          stages: [
+            { id: uid("f"), name: "Demo solicitada",   volume: 100 },
+            { id: uid("f"), name: "Demo realizada",    volume: 35 },
+            { id: uid("f"), name: "Propuesta enviada", volume: 26 },
+            { id: uid("f"), name: "Negociación",       volume: 14 },
+            { id: uid("f"), name: "Cerrado ganado",    volume: 13 }
+          ],
+          totalValue: "€37.8K"
+        },
         kpis: [
           { id: uid("k"), label: "MRR",        value: "€48,200", delta: "+12%",  trend: "up" },
           { id: uid("k"), label: "Pipeline",   value: "€312k",   delta: "+€32k", trend: "up" },
@@ -256,11 +266,32 @@ function defaultData() {
 // ============================================================
 // STATE
 // ============================================================
+function migrateState(s) {
+  if (!s || !s.departments) return s;
+  // Añadir funnel a ventas si falta
+  if (s.departments.ventas && !s.departments.ventas.funnel) {
+    s.departments.ventas.funnel = {
+      stages: [
+        { id: uid("f"), name: "Demo solicitada",   volume: 100 },
+        { id: uid("f"), name: "Demo realizada",    volume: 35 },
+        { id: uid("f"), name: "Propuesta enviada", volume: 26 },
+        { id: uid("f"), name: "Negociación",       volume: 14 },
+        { id: uid("f"), name: "Cerrado ganado",    volume: 13 }
+      ],
+      totalValue: "€37.8K"
+    };
+  }
+  return s;
+}
+
 var state;
 try {
   var raw = localStorage.getItem(STORAGE_KEY);
   state = (raw && JSON.parse(raw)) || defaultData();
   if (!state.departments || !state.deptOrder) state = defaultData();
+  state = migrateState(state);
+  // Persistir migración
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
 } catch (e) { state = defaultData(); }
 
 var saveTimer = null;
@@ -309,7 +340,6 @@ function isAuthed() {
   } catch (e) { return false; }
 }
 function authenticate(pwd) {
-  // Normalización: trim + lowercase + sin espacios
   var clean = String(pwd || "").trim().toLowerCase().replace(/\s+/g, "");
   if (clean !== PASSWORD.toLowerCase()) return false;
   memSession = true;
@@ -338,13 +368,10 @@ function clearAllDropIndicators() {
 function dragStart(e) {
   var item = e.target.closest('[data-drag-type]');
   if (!item) return;
-
-  // No drag from contenteditable
   if (e.target.closest('[contenteditable="true"]')) {
     e.preventDefault();
     return;
   }
-
   dragInfo = {
     type: item.dataset.dragType,
     dept: item.dataset.dept || null,
@@ -353,23 +380,17 @@ function dragStart(e) {
     iIdx: item.dataset.dragIIdx != null ? parseInt(item.dataset.dragIIdx) : null,
     key: item.dataset.dragKey || null
   };
-
   e.dataTransfer.effectAllowed = 'move';
   try { e.dataTransfer.setData('text/plain', dragInfo.type); } catch (err) {}
-
   setTimeout(function() { item.classList.add('dragging'); }, 0);
 }
 
 function dragOver(e) {
   if (!dragInfo) return;
-
   var item = e.target.closest('[data-drag-type="' + dragInfo.type + '"]');
   if (!item) return;
   if (item.classList.contains('dragging')) return;
-
-  // Constraint: same dept (except tabs)
   if (dragInfo.type !== 'tab' && item.dataset.dept !== dragInfo.dept) return;
-  // Constraint for items: same section
   if (dragInfo.type === 'item' && parseInt(item.dataset.dragSIdx) !== dragInfo.sIdx) return;
 
   e.preventDefault();
@@ -377,17 +398,12 @@ function dragOver(e) {
 
   var rect = item.getBoundingClientRect();
   var horizontal = dragInfo.type === 'tab';
-  var pos;
-  if (horizontal) {
-    pos = e.clientX < (rect.left + rect.width / 2) ? 'left' : 'right';
-  } else {
-    pos = e.clientY < (rect.top + rect.height / 2) ? 'above' : 'below';
-  }
+  var pos = horizontal
+    ? (e.clientX < (rect.left + rect.width / 2) ? 'left' : 'right')
+    : (e.clientY < (rect.top + rect.height / 2) ? 'above' : 'below');
 
   if (lastDropTarget !== item || lastDropPos !== pos) {
-    if (lastDropTarget) {
-      lastDropTarget.classList.remove('drop-above','drop-below','drop-left','drop-right');
-    }
+    if (lastDropTarget) lastDropTarget.classList.remove('drop-above','drop-below','drop-left','drop-right');
     item.classList.add('drop-' + pos);
     lastDropTarget = item;
     lastDropPos = pos;
@@ -397,25 +413,16 @@ function dragOver(e) {
 function dropHandler(e) {
   if (!dragInfo || !lastDropTarget) { dragEnd(); return; }
   e.preventDefault();
-
   var target = lastDropTarget;
   var pos = lastDropPos;
 
   switch (dragInfo.type) {
-    case 'tab':
-      reorderTabs(dragInfo.key, target.dataset.dragKey, pos);
-      break;
-    case 'kpi':
-      reorderKpis(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos);
-      break;
-    case 'section':
-      reorderSections(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos);
-      break;
-    case 'item':
-      reorderItems(dragInfo.dept, dragInfo.sIdx, dragInfo.iIdx, parseInt(target.dataset.dragIIdx), pos);
-      break;
+    case 'tab':           reorderTabs(dragInfo.key, target.dataset.dragKey, pos); break;
+    case 'kpi':           reorderKpis(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos); break;
+    case 'section':       reorderSections(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos); break;
+    case 'item':          reorderItems(dragInfo.dept, dragInfo.sIdx, dragInfo.iIdx, parseInt(target.dataset.dragIIdx), pos); break;
+    case 'funnel-stage':  reorderFunnelStages(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos); break;
   }
-
   dragEnd();
 }
 
@@ -441,7 +448,6 @@ function reorderTabs(srcKey, targetKey, pos) {
   var fromIdx = state.deptOrder.indexOf(srcKey);
   var toIdx = state.deptOrder.indexOf(targetKey);
   reorderArrayMove(state.deptOrder, fromIdx, toIdx, pos);
-  // Auto-renumber
   state.deptOrder.forEach(function(key, i) { state.departments[key].number = pad2(i + 1); });
   save();
   rerenderTabs();
@@ -455,7 +461,6 @@ function reorderKpis(dept, fromIdx, toIdx, pos) {
 
 function reorderSections(dept, fromIdx, toIdx, pos) {
   reorderArrayMove(state.departments[dept].sections, fromIdx, toIdx, pos);
-  // Auto-renumber sections
   state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); });
   save();
   rerenderDept(dept);
@@ -463,6 +468,12 @@ function reorderSections(dept, fromIdx, toIdx, pos) {
 
 function reorderItems(dept, sIdx, fromIdx, toIdx, pos) {
   reorderArrayMove(state.departments[dept].sections[sIdx].items, fromIdx, toIdx, pos);
+  save();
+  rerenderDept(dept);
+}
+
+function reorderFunnelStages(dept, fromIdx, toIdx, pos) {
+  reorderArrayMove(state.departments[dept].funnel.stages, fromIdx, toIdx, pos);
   save();
   rerenderDept(dept);
 }
@@ -495,7 +506,6 @@ function renderLogin() {
             '</div>' +
           '</div>' +
           '<button id="login-btn" type="button" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-lg text-sm font-medium tracking-tight transition-colors cursor-pointer">Entrar</button>' +
-          '<div id="login-debug" class="text-[10px] text-slate-400 text-center hidden-soft"></div>' +
         '</form>' +
         '<div class="mt-12 pt-6 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">' +
           '<span>Dashboard interno</span>' +
@@ -504,15 +514,12 @@ function renderLogin() {
       '</div>' +
     '</div>';
 
-  // Focus input
   setTimeout(function(){ var i = $('#login-input'); if (i) i.focus(); }, 50);
 
-  // ── ROBUST AUTH ATTACHMENT ──
   var form = $('#login-form');
   var input = $('#login-input');
   var btn = $('#login-btn');
   var errEl = $('#login-error');
-  var debug = $('#login-debug');
 
   function showLoginError() {
     if (errEl) { errEl.classList.remove('hidden-soft'); errEl.classList.add('flex'); }
@@ -525,20 +532,13 @@ function renderLogin() {
 
   function tryLogin(e) {
     if (e && e.preventDefault) e.preventDefault();
-    if (e && e.stopPropagation) e.stopPropagation();
     if (!input) return;
-
     var pwd = input.value;
-
-    // Visual feedback
     if (btn) { btn.textContent = "Verificando…"; btn.disabled = true; }
-
     try {
       if (authenticate(pwd)) {
-        try {
-          renderRoot();
-        } catch (renderErr) {
-          // Show render error visibly
+        try { renderRoot(); }
+        catch (renderErr) {
           document.body.innerHTML = '<div style="padding:40px;font-family:monospace;color:#991b1b;background:#fef2f2;min-height:100vh;"><h2 style="font-size:18px;margin-bottom:16px;">Error al renderizar el dashboard</h2><pre style="background:#fff;padding:16px;border-radius:8px;font-size:12px;overflow:auto;white-space:pre-wrap;">' + (renderErr.message || renderErr) + '\n\n' + (renderErr.stack || '') + '</pre></div>';
         }
       } else {
@@ -547,21 +547,15 @@ function renderLogin() {
       }
     } catch (authErr) {
       if (btn) { btn.textContent = "Entrar"; btn.disabled = false; }
-      if (debug) {
-        debug.classList.remove('hidden-soft');
-        debug.textContent = "Error: " + (authErr.message || authErr);
-      }
     }
   }
 
-  // TRIPLE BINDING — algo tiene que funcionar
   if (form) form.addEventListener('submit', tryLogin);
   if (btn)  btn.addEventListener('click', tryLogin);
   if (input) {
     input.addEventListener('keypress', function(e) { if (e.key === 'Enter') tryLogin(e); });
     input.addEventListener('keydown',  function(e) { if (e.key === 'Enter') tryLogin(e); });
   }
-  // Fallback global
   window.__tryLogin = tryLogin;
 }
 
@@ -623,6 +617,69 @@ function renderSection(section, idx, dept) {
     '</section>';
 }
 
+// ============================================================
+// RENDER: FUNNEL
+// ============================================================
+function renderFunnel(dept) {
+  var f = state.departments[dept].funnel;
+  if (!f || !f.stages) return '';
+
+  var first = f.stages[0];
+  var last = f.stages[f.stages.length - 1];
+
+  var rowsHTML = f.stages.map(function(stage, i) {
+    var prev = i > 0 ? f.stages[i - 1] : null;
+    var vsAnt = (i === 0) ? '—' : pct(stage.volume, prev.volume);
+    var vsTop = (i === 0) ? '—' : pct(stage.volume, first.volume);
+    var prefix = 'departments.' + dept + '.funnel.stages.' + i;
+
+    return '' +
+      '<div draggable="true" data-drag-type="funnel-stage" data-dept="' + dept + '" data-drag-idx="' + i + '" class="group/stage px-6 py-3 grid grid-cols-12 gap-4 items-center border-b border-slate-100 last:border-0">' +
+        '<div class="col-span-6 flex items-center gap-2 -ml-1">' +
+          '<span class="drag-handle no-print text-slate-400" title="Arrastrar etapa">' + ICON.grip + '</span>' +
+          '<span contenteditable="true" data-edit="' + prefix + '.name" class="text-sm text-slate-700 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(stage.name) + '</span>' +
+        '</div>' +
+        '<div class="col-span-2 text-right">' +
+          '<span contenteditable="true" data-edit="' + prefix + '.volume" data-numeric="1" class="text-base font-semibold text-slate-900 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(String(stage.volume)) + '</span>' +
+        '</div>' +
+        '<div class="col-span-2 text-right text-sm text-slate-400">' + vsAnt + '</div>' +
+        '<div class="col-span-2 text-right flex items-center justify-end gap-2">' +
+          '<span class="text-sm text-slate-400">' + vsTop + '</span>' +
+          '<button data-action="delete-funnel-stage" data-dept="' + dept + '" data-idx="' + i + '" class="opacity-0 group-hover/stage:opacity-100 text-slate-300 hover:text-rose-500 transition-all no-print" title="Eliminar etapa">' + ICON.trash + '</button>' +
+        '</div>' +
+      '</div>';
+  }).join('');
+
+  var globalConv = first ? pct(last.volume, first.volume) : '—';
+
+  return '' +
+    '<div class="max-w-5xl mx-auto px-6 pt-2 pb-6">' +
+      '<div class="flex items-center justify-between mb-3">' +
+        '<h3 class="text-[11px] uppercase tracking-[0.2em] text-slate-400 font-medium">Pipeline comercial</h3>' +
+        '<button data-action="add-funnel-stage" data-dept="' + dept + '" class="text-[11px] text-slate-400 hover:text-slate-900 transition-colors no-print">+ Añadir</button>' +
+      '</div>' +
+      '<div class="bg-white border border-slate-200 rounded-xl overflow-hidden">' +
+        '<div class="px-6 py-2 grid grid-cols-12 gap-4 text-[10px] uppercase tracking-widest text-slate-400 border-b border-slate-200">' +
+          '<div class="col-span-6">Etapa</div>' +
+          '<div class="col-span-2 text-right">Vol.</div>' +
+          '<div class="col-span-2 text-right">vs Ant.</div>' +
+          '<div class="col-span-2 text-right">vs Top</div>' +
+        '</div>' +
+        rowsHTML +
+        '<div class="px-6 py-3 grid grid-cols-12 gap-4 items-center border-t border-slate-200">' +
+          '<div class="col-span-8 text-[11px] uppercase tracking-widest text-slate-400">Valor total pipeline</div>' +
+          '<div class="col-span-4 text-right">' +
+            '<span contenteditable="true" data-edit="departments.' + dept + '.funnel.totalValue" class="text-base font-semibold text-slate-900 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(f.totalValue) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="px-6 py-3 grid grid-cols-12 gap-4 items-center border-t border-slate-100">' +
+          '<div class="col-span-8 text-[11px] uppercase tracking-widest text-slate-400">Tasa conversión global</div>' +
+          '<div class="col-span-4 text-right text-base font-semibold text-emerald-600">' + globalConv + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
 function renderDeptInner(dept) {
   var d = state.departments[dept];
   return '' +
@@ -637,6 +694,7 @@ function renderDeptInner(dept) {
       '</div>' +
       '<button data-action="add-kpi" data-dept="' + dept + '" class="mt-3 text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1.5 transition-colors no-print">' + ICON.plus + ' Añadir KPI</button>' +
     '</div>' +
+    (d.funnel ? renderFunnel(dept) : '<div class="max-w-5xl mx-auto px-6 pb-2"><button data-action="add-funnel" data-dept="' + dept + '" class="text-[11px] text-slate-400 hover:text-slate-900 transition-colors no-print">+ Añadir funnel a esta área</button></div>') +
     '<main class="max-w-5xl mx-auto px-6 py-12">' +
       d.sections.map(function(s, i) { return renderSection(s, i, dept); }).join('') +
       '<button data-action="add-section" data-dept="' + dept + '" class="mt-4 w-full py-4 border border-dashed border-slate-200 hover:border-slate-300 rounded-lg text-sm text-slate-400 hover:text-slate-700 flex items-center justify-center gap-2 transition-colors no-print">' + ICON.plus + ' Añadir sección</button>' +
@@ -677,7 +735,6 @@ function renderDeptAreaInner() {
 function renderDashboard() {
   $('#root').innerHTML =
     '<div class="min-h-screen bg-[#fafafa]">' +
-      // HEADER
       '<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 no-print">' +
         '<div class="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">' +
           '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:opacity-70 transition-opacity">' +
@@ -702,22 +759,18 @@ function renderDashboard() {
         '</div>' +
       '</header>' +
 
-      // COVER
       '<div class="max-w-5xl mx-auto px-6 pt-16 pb-10 fade-in">' +
         '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3"><span contenteditable="true" data-edit="weekLabel" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.weekLabel) + '</span></div>' +
         '<h1 class="text-5xl md:text-6xl font-semibold text-slate-900 tracking-tight leading-[1.05] mb-4">Weekly <em class="font-serif italic text-slate-700">Business</em> Review</h1>' +
         '<p class="text-base text-slate-500 leading-relaxed max-w-2xl"><span contenteditable="true" data-edit="manifesto" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.manifesto) + '</span></p>' +
       '</div>' +
 
-      // TABS
       '<div class="border-b border-slate-200 sticky top-[57px] bg-[#fafafa]/90 backdrop-blur-md z-10 no-print">' +
         '<div id="tab-nav" class="max-w-5xl mx-auto px-6 flex gap-6 overflow-x-auto items-center">' + renderTabsInner() + '</div>' +
       '</div>' +
 
-      // DEPT AREA
       '<div id="dept-area" class="fade-in">' + renderDeptAreaInner() + '</div>' +
 
-      // FOOTER
       '<footer class="max-w-5xl mx-auto px-6 py-12 mt-8 border-t border-slate-100">' +
         '<div class="flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-slate-400">' +
           '<div class="flex flex-wrap gap-6"><span>Edición en línea</span><span>Drag & drop</span><span>Auto-guardado</span><span>Print: todas las áreas</span></div>' +
@@ -734,16 +787,8 @@ function rerenderDept(dept) {
   var el = document.querySelector('.dept-content[data-dept="' + dept + '"]');
   if (el) el.innerHTML = renderDeptInner(dept);
 }
-
-function rerenderTabs() {
-  var el = $('#tab-nav');
-  if (el) el.innerHTML = renderTabsInner();
-}
-
-function rerenderDeptArea() {
-  var el = $('#dept-area');
-  if (el) el.innerHTML = renderDeptAreaInner();
-}
+function rerenderTabs() { var el = $('#tab-nav'); if (el) el.innerHTML = renderTabsInner(); }
+function rerenderDeptArea() { var el = $('#dept-area'); if (el) el.innerHTML = renderDeptAreaInner(); }
 
 function setActiveDept(key) {
   state.activeDept = key;
@@ -775,22 +820,39 @@ function addItem(dept, sIdx)         { state.departments[dept].sections[sIdx].it
 function deleteItem(dept, sIdx, iIdx){ state.departments[dept].sections[sIdx].items.splice(iIdx, 1); save(); rerenderDept(dept); }
 function changeStatus(dept, sIdx, iIdx, v) { state.departments[dept].sections[sIdx].items[iIdx].status = v; save(); rerenderDept(dept); }
 
+// FUNNEL ACTIONS
+function addFunnel(dept) {
+  state.departments[dept].funnel = {
+    stages: [
+      { id: uid("f"), name: "Demo solicitada", volume: 100 },
+      { id: uid("f"), name: "Cerrado ganado", volume: 0 }
+    ],
+    totalValue: "€0"
+  };
+  save(); rerenderDept(dept);
+}
+function addFunnelStage(dept) {
+  if (!state.departments[dept].funnel) addFunnel(dept);
+  state.departments[dept].funnel.stages.push({ id: uid("f"), name: "Nueva etapa", volume: 0 });
+  save(); rerenderDept(dept);
+}
+function deleteFunnelStage(dept, idx) {
+  state.departments[dept].funnel.stages.splice(idx, 1);
+  save(); rerenderDept(dept);
+}
+
 function addDept() {
   var key = uid("dept");
   var num = pad2(state.deptOrder.length + 1);
   state.departments[key] = {
-    name: "Nueva área",
-    number: num,
+    name: "Nueva área", number: num,
     kpis: [{ id: uid("k"), label: "KPI", value: "0", delta: "+0%", trend: "up" }],
     sections: [{ id: uid("s"), number: "01", title: "Resumen", content: "Descripción…", items: [] }]
   };
   state.deptOrder.push(key);
   state.activeDept = key;
-  save();
-  rerenderTabs();
-  rerenderDeptArea();
+  save(); rerenderTabs(); rerenderDeptArea();
 }
-
 function deleteDept(key) {
   if (state.deptOrder.length <= 1) return;
   if (!confirm("¿Eliminar el área '" + state.departments[key].name + "' y todos sus datos?")) return;
@@ -798,16 +860,13 @@ function deleteDept(key) {
   state.deptOrder = state.deptOrder.filter(function(k) { return k !== key; });
   state.deptOrder.forEach(function(k, i) { state.departments[k].number = pad2(i + 1); });
   if (state.activeDept === key) state.activeDept = state.deptOrder[0];
-  save();
-  rerenderTabs();
-  rerenderDeptArea();
+  save(); rerenderTabs(); rerenderDeptArea();
 }
 
 function resetAll() {
   if (!confirm("¿Restablecer todos los datos al estado por defecto? Esta acción no se puede deshacer.")) return;
   state = defaultData();
-  save();
-  renderDashboard();
+  save(); renderDashboard();
 }
 
 // ============================================================
@@ -820,7 +879,6 @@ function attachEvents() {
   var root = $('#root');
 
   root.addEventListener('click', function(e) {
-    // Don't trigger button if click was on contenteditable
     if (e.target.closest('[contenteditable="true"]')) return;
     var btn = e.target.closest('[data-action]');
     if (!btn || btn.tagName === 'SELECT') return;
@@ -831,19 +889,22 @@ function attachEvents() {
     var iIdx = parseInt(btn.dataset.itemIdx);
 
     switch (action) {
-      case 'set-tab':        setActiveDept(btn.dataset.tab); break;
-      case 'delete-kpi':     deleteKpi(dept, idx); break;
-      case 'add-kpi':        addKpi(dept); break;
-      case 'toggle-trend':   toggleTrend(dept, idx); break;
-      case 'delete-section': deleteSection(dept, idx); break;
-      case 'add-section':    addSection(dept); break;
-      case 'add-item':       addItem(dept, idx); break;
-      case 'delete-item':    deleteItem(dept, sIdx, iIdx); break;
-      case 'add-dept':       addDept(); break;
-      case 'delete-dept':    deleteDept(btn.dataset.key); break;
-      case 'print':          window.print(); break;
-      case 'logout':         logout(); break;
-      case 'reset':          resetAll(); break;
+      case 'set-tab':            setActiveDept(btn.dataset.tab); break;
+      case 'delete-kpi':         deleteKpi(dept, idx); break;
+      case 'add-kpi':            addKpi(dept); break;
+      case 'toggle-trend':       toggleTrend(dept, idx); break;
+      case 'delete-section':     deleteSection(dept, idx); break;
+      case 'add-section':        addSection(dept); break;
+      case 'add-item':           addItem(dept, idx); break;
+      case 'delete-item':        deleteItem(dept, sIdx, iIdx); break;
+      case 'add-funnel':         addFunnel(dept); break;
+      case 'add-funnel-stage':   addFunnelStage(dept); break;
+      case 'delete-funnel-stage':deleteFunnelStage(dept, idx); break;
+      case 'add-dept':           addDept(); break;
+      case 'delete-dept':        deleteDept(btn.dataset.key); break;
+      case 'print':              window.print(); break;
+      case 'logout':             logout(); break;
+      case 'reset':              resetAll(); break;
     }
   });
 
@@ -856,7 +917,21 @@ function attachEvents() {
   root.addEventListener('blur', function(e) {
     var el = e.target.closest('[data-edit]');
     if (!el) return;
-    setStateAt(el.dataset.edit, el.innerText.trim());
+    var path = el.dataset.edit;
+    var value = el.innerText.trim();
+
+    // Numeric fields (funnel volumes)
+    if (el.dataset.numeric === "1" || /\.funnel\.stages\.\d+\.volume$/.test(path)) {
+      value = parseInt(String(value).replace(/[^0-9-]/g, '')) || 0;
+    }
+
+    setStateAt(path, value);
+
+    // Recompute funnel percentages on edit
+    if (path.indexOf('.funnel.') !== -1) {
+      var m = path.match(/^departments\.([^.]+)\./);
+      if (m) rerenderDept(m[1]);
+    }
   }, true);
 
   root.addEventListener('keydown', function(e) {
@@ -866,14 +941,10 @@ function attachEvents() {
     }
   });
 
-  // ── DRAG & DROP ──
   root.addEventListener('dragstart', dragStart);
   root.addEventListener('dragover', dragOver);
   root.addEventListener('drop', dropHandler);
   root.addEventListener('dragend', dragEnd);
-  root.addEventListener('dragleave', function(e) {
-    // Optional: clear indicator when leaving root
-  });
 }
 
 // ============================================================
