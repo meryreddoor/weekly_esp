@@ -53,14 +53,18 @@
     .drag-handle { display: none !important; }
     footer { display: none !important; }
   }
+  body.exporting { background: white !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
+  body.exporting .min-h-screen { min-height: auto !important; background: white !important; }
   body.exporting .no-print { display: none !important; }
-  body.exporting .dept-content { display: block !important; padding-top: 24px; }
-  body.exporting .dept-content:first-of-type { padding-top: 0; }
+  body.exporting .dept-content { display: block !important; padding: 24px 32px !important; }
+  body.exporting .dept-content:first-of-type { padding-top: 0 !important; }
   body.exporting .dept-content:not(:first-of-type) { page-break-before: always; break-before: page; }
-  body.exporting .dept-print-title { display: block !important; }
+  body.exporting .dept-print-title { display: block !important; padding-left: 8px !important; padding-right: 8px !important; box-sizing: border-box; }
   body.exporting .drag-handle { display: none !important; }
   body.exporting .sticky { position: static !important; }
   body.exporting footer { display: none !important; }
+  body.exporting [contenteditable] { margin-left: 0 !important; margin-right: 0 !important; }
+  body.exporting .max-w-5xl { max-width: none !important; padding-left: 8px !important; padding-right: 8px !important; }
   .dept-print-title { display: none; }
 </style>
 </head>
