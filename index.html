@@ -105,10 +105,75 @@
 "use strict";
 
 // ============================================================
+// MODAL DE CONFIRMACIÓN CON CONTRASEÑA (reutilizable)
+// ============================================================
+var pendingDestructiveAction = null;
+
+function openDestructiveModal(opts) {
+  // opts: { title, description, confirmLabel, password, onConfirm }
+  pendingDestructiveAction = opts;
+  var modal = $('#modal-host');
+  modal.innerHTML =
+    '<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-6 fade-in">' +
+      '<div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">' +
+        '<div class="flex items-start justify-between mb-4">' +
+          '<div>' +
+            '<div class="text-[11px] text-rose-500 uppercase tracking-[0.2em] mb-1">Acción restringida</div>' +
+            '<h2 class="text-xl font-semibold text-slate-900 tracking-tight">' + escapeHTML(opts.title) + '</h2>' +
+          '</div>' +
+          '<button data-action="modal-close" class="text-slate-400 hover:text-slate-700">' + ICON.close + '</button>' +
+        '</div>' +
+        '<div class="bg-rose-50 border border-rose-100 rounded-lg p-3 mb-5">' +
+          '<p class="text-sm text-rose-800 leading-relaxed">' + opts.description + '</p>' +
+        '</div>' +
+        '<div class="mb-4">' +
+          '<label class="text-[11px] text-slate-500 uppercase tracking-widest mb-2 block">Contraseña de administrador</label>' +
+          '<div class="relative">' +
+            '<div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">' + ICON.lock + '</div>' +
+            '<input id="destructive-pwd" type="password" class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/20" placeholder="Contraseña" autocomplete="off" />' +
+          '</div>' +
+          '<div id="destructive-error" class="hidden-soft items-center gap-1.5 mt-2 text-xs text-rose-600">' +
+            '<div class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></div>Contraseña incorrecta' +
+          '</div>' +
+        '</div>' +
+        '<div class="flex justify-end gap-2 mt-6">' +
+          '<button data-action="modal-close" class="text-xs px-4 py-2 border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 rounded-md">Cancelar</button>' +
+          '<button data-action="confirm-destructive" class="text-xs px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-md">' + escapeHTML(opts.confirmLabel || 'Confirmar') + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  setTimeout(function() { var i = $('#destructive-pwd'); if (i) i.focus(); }, 50);
+}
+
+function confirmDestructive() {
+  if (!pendingDestructiveAction) return;
+  var input = $('#destructive-pwd');
+  var errEl = $('#destructive-error');
+  if (!input) return;
+  var clean = String(input.value || '').trim().toLowerCase().replace(/\s+/g, '');
+  var expected = String(pendingDestructiveAction.password || '').toLowerCase();
+  if (clean !== expected) {
+    errEl.classList.remove('hidden-soft'); errEl.classList.add('flex');
+    input.classList.add('border-rose-300'); input.classList.remove('border-slate-200');
+    input.value = '';
+    setTimeout(function() {
+      if (errEl) { errEl.classList.add('hidden-soft'); errEl.classList.remove('flex'); }
+      if (input) { input.classList.remove('border-rose-300'); input.classList.add('border-slate-200'); input.focus(); }
+    }, 2200);
+    return;
+  }
+  var fn = pendingDestructiveAction.onConfirm;
+  pendingDestructiveAction = null;
+  closeModal();
+  if (typeof fn === 'function') fn();
+}
+
+// ============================================================
 // CONFIG
 // ============================================================
 var PASSWORD = "esphera2026";
 var RESET_PASSWORD = "reset_dashboard";
+var DELETE_PASSWORD = "delete_esphera_2026";
 var STORAGE_KEY = "wbr-esphera-v3";
 var SNAPSHOTS_KEY = "wbr-esphera-snapshots-v1";
 var SESSION_KEY = "wbr-esphera-session";
@@ -137,6 +202,7 @@ try { localStorage.removeItem(SNAP_BIN_ID_KEY); } catch(e) {}
 var STATUS_CONFIG = {
   done:     { label: "Completado", emoji: "✅", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   progress: { label: "En curso",   emoji: "🔄", color: "bg-amber-50 text-amber-700 border-amber-200" },
+  warning:  { label: "En riesgo",  emoji: "⚠️", color: "bg-orange-50 text-orange-700 border-orange-200" },
   blocked:  { label: "Bloqueado",  emoji: "🚫", color: "bg-rose-50 text-rose-700 border-rose-200" }
 };
 
@@ -353,7 +419,7 @@ function defaultData() {
   return {
     weekLabel: "Semana " + getWeekNumber() + " · " + new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' }),
     author: "Tu nombre",
-    manifesto: "Que el reporting no te pare. Menos repetición, más criterio.",
+    manifesto: "El pulso semanal de esphera · Ventas, Marketing, Finanzas y Tecnología.",
     activeDept: "ventas",
     deptOrder: ["ventas", "marketing", "finanzas", "tecnologia"],
     departments: {
@@ -836,7 +902,7 @@ function renderKpiCard(kpi, idx, dept) {
 }
 function renderItem(item, sIdx, iIdx, dept) {
   var cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG.progress;
-  var optionHTML = ['done','progress','blocked'].map(function(k) {
+  var optionHTML = ['done','progress','warning','blocked'].map(function(k) {
     var c = STATUS_CONFIG[k];
     var sel = item.status === k ? ' selected' : '';
     return '<option value="' + k + '"' + sel + '>' + c.emoji + ' ' + c.label + '</option>';
@@ -1375,17 +1441,63 @@ function importSnapshotJSON() {
 // ============================================================
 // ACTIONS
 // ============================================================
-function deleteKpi(dept, idx)        { state.departments[dept].kpis.splice(idx, 1); save(); rerenderDept(dept); }
-function addKpi(dept)                { state.departments[dept].kpis.push({ id: uid("k"), label: "Nuevo KPI", value: "0", delta: "+0%", trend: "up" }); save(); rerenderDept(dept); }
-function toggleTrend(dept, idx)      { var k = state.departments[dept].kpis[idx]; k.trend = k.trend === "up" ? "down" : "up"; save(); rerenderDept(dept); }
-function deleteSection(dept, idx)    { state.departments[dept].sections.splice(idx, 1); state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); }); save(); rerenderDept(dept); }
-function addSection(dept)            { var n = pad2(state.departments[dept].sections.length + 1); state.departments[dept].sections.push({ id: uid("s"), number: n, title: "Nueva sección", content: "Descripción…", items: [] }); save(); rerenderDept(dept); }
-function addItem(dept, sIdx)         { state.departments[dept].sections[sIdx].items.push({ id: uid("i"), status: "progress", text: "Nuevo punto…" }); save(); rerenderDept(dept); }
-function deleteItem(dept, sIdx, iIdx){ state.departments[dept].sections[sIdx].items.splice(iIdx, 1); save(); rerenderDept(dept); }
+function deleteKpi(dept, idx) {
+  openDestructiveModal({
+    title: 'Eliminar KPI',
+    description: 'Vas a eliminar el KPI <strong>"' + escapeHTML(state.departments[dept].kpis[idx].label) + '"</strong>. Esta acción es definitiva (puedes guardar una versión antes desde el icono 💾).',
+    confirmLabel: 'Eliminar',
+    password: DELETE_PASSWORD,
+    onConfirm: function() {
+      state.departments[dept].kpis.splice(idx, 1); save(); rerenderDept(dept);
+      showToast('KPI eliminado');
+    }
+  });
+}
+function addKpi(dept) { state.departments[dept].kpis.push({ id: uid("k"), label: "Nuevo KPI", value: "0", delta: "+0%", trend: "up" }); save(); rerenderDept(dept); }
+function toggleTrend(dept, idx) { var k = state.departments[dept].kpis[idx]; k.trend = k.trend === "up" ? "down" : "up"; save(); rerenderDept(dept); }
+function deleteSection(dept, idx) {
+  openDestructiveModal({
+    title: 'Eliminar sección',
+    description: 'Vas a eliminar la sección <strong>"' + escapeHTML(state.departments[dept].sections[idx].title) + '"</strong> y todos sus puntos. Esta acción es definitiva.',
+    confirmLabel: 'Eliminar sección',
+    password: DELETE_PASSWORD,
+    onConfirm: function() {
+      state.departments[dept].sections.splice(idx, 1);
+      state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); });
+      save(); rerenderDept(dept);
+      showToast('Sección eliminada');
+    }
+  });
+}
+function addSection(dept) { var n = pad2(state.departments[dept].sections.length + 1); state.departments[dept].sections.push({ id: uid("s"), number: n, title: "Nueva sección", content: "Descripción…", items: [] }); save(); rerenderDept(dept); }
+function addItem(dept, sIdx) { state.departments[dept].sections[sIdx].items.push({ id: uid("i"), status: "progress", text: "Nuevo punto…" }); save(); rerenderDept(dept); }
+function deleteItem(dept, sIdx, iIdx) {
+  openDestructiveModal({
+    title: 'Eliminar punto',
+    description: 'Vas a eliminar este punto de la lista. Esta acción es definitiva.',
+    confirmLabel: 'Eliminar',
+    password: DELETE_PASSWORD,
+    onConfirm: function() {
+      state.departments[dept].sections[sIdx].items.splice(iIdx, 1); save(); rerenderDept(dept);
+      showToast('Punto eliminado');
+    }
+  });
+}
 function changeStatus(dept, sIdx, iIdx, v) { state.departments[dept].sections[sIdx].items[iIdx].status = v; save(); rerenderDept(dept); }
 function addFunnel(dept) { state.departments[dept].funnel = { stages: [{ id: uid("f"), name: "Demo solicitada", volume: 100 },{ id: uid("f"), name: "Cerrado ganado", volume: 0 }], totalValue: "€0" }; save(); rerenderDept(dept); }
 function addFunnelStage(dept) { if (!state.departments[dept].funnel) addFunnel(dept); state.departments[dept].funnel.stages.push({ id: uid("f"), name: "Nueva etapa", volume: 0 }); save(); rerenderDept(dept); }
-function deleteFunnelStage(dept, idx) { state.departments[dept].funnel.stages.splice(idx, 1); save(); rerenderDept(dept); }
+function deleteFunnelStage(dept, idx) {
+  openDestructiveModal({
+    title: 'Eliminar etapa del funnel',
+    description: 'Vas a eliminar la etapa <strong>"' + escapeHTML(state.departments[dept].funnel.stages[idx].name) + '"</strong>. Esta acción es definitiva.',
+    confirmLabel: 'Eliminar etapa',
+    password: DELETE_PASSWORD,
+    onConfirm: function() {
+      state.departments[dept].funnel.stages.splice(idx, 1); save(); rerenderDept(dept);
+      showToast('Etapa eliminada');
+    }
+  });
+}
 function addDept() {
   var key = uid("dept"); var num = pad2(state.deptOrder.length + 1);
   state.departments[key] = { name: "Nueva área", number: num, kpis: [{ id: uid("k"), label: "KPI", value: "0", delta: "+0%", trend: "up" }], sections: [{ id: uid("s"), number: "01", title: "Resumen", content: "Descripción…", items: [] }] };
@@ -1394,12 +1506,20 @@ function addDept() {
 }
 function deleteDept(key) {
   if (state.deptOrder.length <= 1) return;
-  if (!confirm("¿Eliminar el área '" + state.departments[key].name + "'?")) return;
-  delete state.departments[key];
-  state.deptOrder = state.deptOrder.filter(function(k) { return k !== key; });
-  state.deptOrder.forEach(function(k, i) { state.departments[k].number = pad2(i + 1); });
-  if (state.activeDept === key) state.activeDept = state.deptOrder[0];
-  save(); rerenderTabs(); rerenderDeptArea();
+  openDestructiveModal({
+    title: 'Eliminar área',
+    description: 'Vas a eliminar el área <strong>"' + escapeHTML(state.departments[key].name) + '"</strong> y todos sus datos (KPIs, secciones, funnel, etc.). Esta acción es definitiva.',
+    confirmLabel: 'Eliminar área',
+    password: DELETE_PASSWORD,
+    onConfirm: function() {
+      delete state.departments[key];
+      state.deptOrder = state.deptOrder.filter(function(k) { return k !== key; });
+      state.deptOrder.forEach(function(k, i) { state.departments[k].number = pad2(i + 1); });
+      if (state.activeDept === key) state.activeDept = state.deptOrder[0];
+      save(); rerenderTabs(); rerenderDeptArea();
+      showToast('Área eliminada');
+    }
+  });
 }
 function openResetModal() {
   var modal = $('#modal-host');
@@ -1521,8 +1641,9 @@ function attachEvents() {
       case 'delete-dept':        deleteDept(btn.dataset.key); break;
       case 'print':              exportPDF(); break;
       case 'logout':             logout(); break;
+      case 'confirm-destructive': confirmDestructive(); break;
       case 'change-user':
-        if (confirm('¿Cambiar tu nombre de usuario?')) { clearUser(); renderRoot(); }
+        if (confirm('¿Cambiar tu nombre de usuario? Solo afecta a tu navegador.')) { clearUser(); renderRoot(); }
         break;
       case 'sync-pull':          syncPull(false); break;
       case 'reset':              resetAll(); break;
@@ -1533,14 +1654,28 @@ function attachEvents() {
       case 'snapshot-restore-quick': restoreSnapshotQuick(snapId); break;
       case 'toggle-week-dropdown': toggleWeekDropdown(); break;
       case 'snapshot-restore':
-        if (confirm('¿Restaurar esta versión? Los datos actuales se sobreescribirán (puedes guardar una versión antes si quieres).')) {
-          restoreSnapshot(snapId); closeModal(); showToast('Versión restaurada');
-        }
+        var snapToRestore = loadSnapshots().find(function(s) { return s.id === snapId; });
+        openDestructiveModal({
+          title: 'Restaurar versión',
+          description: 'Vas a sobreescribir <strong>todos los datos actuales</strong> con la versión <strong>"' + (snapToRestore ? escapeHTML(snapToRestore.label) : '') + '"</strong>. Los cambios actuales se perderán salvo que guardes una versión antes.',
+          confirmLabel: 'Restaurar',
+          password: DELETE_PASSWORD,
+          onConfirm: function() {
+            restoreSnapshot(snapId); closeModal(); showToast('Versión restaurada');
+          }
+        });
         break;
       case 'snapshot-delete':
-        if (confirm('¿Eliminar este snapshot definitivamente?')) {
-          deleteSnapshot(snapId); openSnapshotListModal();
-        }
+        var snapToDelete = loadSnapshots().find(function(s) { return s.id === snapId; });
+        openDestructiveModal({
+          title: 'Eliminar versión',
+          description: 'Vas a eliminar el snapshot <strong>"' + (snapToDelete ? escapeHTML(snapToDelete.label) : '') + '"</strong> definitivamente. Esta acción no se puede deshacer.',
+          confirmLabel: 'Eliminar versión',
+          password: DELETE_PASSWORD,
+          onConfirm: function() {
+            deleteSnapshot(snapId); openSnapshotListModal(); showToast('Versión eliminada');
+          }
+        });
         break;
       case 'snapshot-export':    exportSnapshotJSON(snapId); break;
       case 'snapshot-import':    importSnapshotJSON(); break;
@@ -1575,6 +1710,9 @@ function attachEvents() {
     }
     if (e.key === 'Enter' && e.target.id === 'reset-pwd') {
       e.preventDefault(); confirmReset();
+    }
+    if (e.key === 'Enter' && e.target.id === 'destructive-pwd') {
+      e.preventDefault(); confirmDestructive();
     }
     if (e.key === 'Escape') closeModal();
   });
