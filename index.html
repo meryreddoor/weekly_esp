@@ -16,8 +16,8 @@
   })();
 </script>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" onerror="window.__pdfLibFailed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" onerror="window.__pdfLibFailed=true"></script>
 
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; background: #fafafa; }
@@ -77,8 +77,29 @@
 </head>
 <body>
 
-<div id="root"></div>
+<div id="root">
+  <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#64748b;font-family:-apple-system,system-ui,sans-serif;">
+    <div style="text-align:center;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#0f172a;margin:0 auto 12px;animation:loadPulse 1.5s ease-in-out infinite"></div>
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;">Cargando…</div>
+    </div>
+  </div>
+</div>
 <div id="pdf-stage"></div>
+
+<style>
+  @keyframes loadPulse { 0%,100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.5); } }
+</style>
+
+<script>
+  // Captura visible de errores
+  window.addEventListener('error', function(e) {
+    if (window.__appLoaded) return;
+    var root = document.getElementById('root');
+    if (!root) return;
+    root.innerHTML = '<div style="padding:40px;max-width:720px;margin:60px auto;font-family:-apple-system,system-ui,sans-serif;"><div style="background:#fef2f2;border:1px solid #fee2e2;border-radius:12px;padding:24px;"><h2 style="margin:0 0 12px;font-size:16px;color:#991b1b;font-weight:600;">No se pudo cargar la app</h2><p style="margin:0 0 16px;font-size:13px;color:#7f1d1d;line-height:1.5;"><strong>' + (e.message || 'Error desconocido') + '</strong></p><pre style="background:#fff;padding:12px;border-radius:6px;font-size:11px;overflow:auto;color:#374151;white-space:pre-wrap;max-height:240px;border:1px solid #fecaca;">' + ((e.error && e.error.stack) || (e.filename + ':' + e.lineno + ':' + e.colno) || '') + '</pre><p style="margin:16px 0 0;font-size:12px;color:#7f1d1d;line-height:1.5;">Mándame esta captura para ayudarte a diagnosticar.</p></div></div>';
+  });
+</script>
 
 <script>
 "use strict";
@@ -87,6 +108,7 @@
 // CONFIG
 // ============================================================
 var PASSWORD = "esphera2026";
+var RESET_PASSWORD = "reset_dashboard";
 var STORAGE_KEY = "wbr-esphera-v3";
 var SNAPSHOTS_KEY = "wbr-esphera-snapshots-v1";
 var SESSION_KEY = "wbr-esphera-session";
@@ -729,7 +751,26 @@ function renderDashboard() {
         '</div>' +
       '</header>' +
       '<div class="max-w-5xl mx-auto px-6 pt-16 pb-10 fade-in">' +
-        '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3"><span contenteditable="true" data-edit="weekLabel" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.weekLabel) + '</span></div>' +
+        '<div class="relative inline-block" id="week-selector-wrap">' +
+          '<button id="week-selector-btn" data-action="toggle-week-dropdown" class="group flex items-center gap-2 text-[11px] text-slate-400 hover:text-slate-700 uppercase tracking-[0.2em] mb-3 transition-colors cursor-pointer">' +
+            '<span><span contenteditable="true" data-edit="weekLabel" data-stop-toggle="1" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.weekLabel) + '</span></span>' +
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="opacity-50 group-hover:opacity-100 transition-opacity"><polyline points="6 9 12 15 18 9"/></svg>' +
+          '</button>' +
+          '<div id="week-dropdown" class="hidden-soft absolute top-full left-0 mt-1 w-[360px] max-w-[90vw] bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden">' +
+            '<div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">' +
+              '<div>' +
+                '<div class="text-[10px] uppercase tracking-widest text-slate-400 mb-0.5">Histórico</div>' +
+                '<div class="text-xs font-medium text-slate-700">Cambiar a una versión guardada</div>' +
+              '</div>' +
+              '<button data-action="snapshot-save" class="text-[11px] text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-100" title="Guardar versión actual">' + ICON.save + '</button>' +
+            '</div>' +
+            '<div id="week-dropdown-list" class="max-h-[320px] overflow-y-auto"></div>' +
+            '<div class="px-4 py-2.5 border-t border-slate-100 flex items-center justify-between text-[10px]">' +
+              '<button data-action="snapshot-list" class="text-slate-500 hover:text-slate-900 uppercase tracking-widest">Ver todas</button>' +
+              '<button data-action="snapshot-import" class="text-slate-400 hover:text-slate-700 uppercase tracking-widest">Importar</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
         '<h1 class="text-5xl md:text-6xl font-semibold text-slate-900 tracking-tight leading-[1.05] mb-4">Weekly <em class="font-serif italic text-slate-700">Business</em> Review</h1>' +
         '<p class="text-base text-slate-500 leading-relaxed max-w-2xl"><span contenteditable="true" data-edit="manifesto" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.manifesto) + '</span></p>' +
       '</div>' +
@@ -738,11 +779,9 @@ function renderDashboard() {
       '</div>' +
       '<div id="dept-area" class="fade-in">' + renderDeptAreaInner() + '</div>' +
       '<footer class="max-w-5xl mx-auto px-6 py-12 mt-8 border-t border-slate-100">' +
-        '<div class="flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-slate-400">' +
-          '<div class="flex flex-wrap gap-6"><span>Edición en línea</span><span>Drag & drop</span><span>Auto-guardado</span><span>Histórico de versiones</span></div>' +
-          '<div class="flex items-center gap-4"><button data-action="reset" class="hover:text-rose-500 no-print">Restablecer</button>' +
-            '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700">esphera.ai ↗</a>' +
-          '</div>' +
+        '<div class="flex items-center justify-end gap-4 text-[10px] uppercase tracking-widest text-slate-400">' +
+          '<button data-action="reset" class="hover:text-rose-500 no-print">Restablecer</button>' +
+          '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700">esphera.ai ↗</a>' +
         '</div>' +
       '</footer>' +
       '<div id="modal-host"></div>' +
@@ -932,7 +971,53 @@ function exportPDF() {
 }
 
 // ============================================================
-// SNAPSHOT MODALS
+// WEEK SELECTOR DROPDOWN
+// ============================================================
+function renderWeekDropdownList() {
+  var snapshots = loadSnapshots();
+  var listEl = $('#week-dropdown-list');
+  if (!listEl) return;
+  if (snapshots.length === 0) {
+    listEl.innerHTML = '<div class="px-4 py-8 text-center text-xs text-slate-400">Aún no hay versiones guardadas.<br/><span class="text-slate-300">Pulsa el icono 💾 para guardar la actual.</span></div>';
+    return;
+  }
+  listEl.innerHTML = snapshots.map(function(snap) {
+    return '' +
+      '<button data-action="snapshot-restore-quick" data-id="' + snap.id + '" class="group w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-left border-b border-slate-50 last:border-0 transition-colors">' +
+        '<div class="w-1.5 h-1.5 rounded-full bg-slate-300 group-hover:bg-slate-700 transition-colors flex-shrink-0"></div>' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="text-sm font-medium text-slate-800 truncate">' + escapeHTML(snap.label) + '</div>' +
+          '<div class="text-[11px] text-slate-400 mt-0.5">' + formatDateTime(snap.createdAt) + ' · ' + escapeHTML(snap.author) + '</div>' +
+        '</div>' +
+      '</button>';
+  }).join('');
+}
+
+function toggleWeekDropdown(forceState) {
+  var dd = $('#week-dropdown');
+  if (!dd) return;
+  var isOpen = !dd.classList.contains('hidden-soft');
+  var shouldOpen = (typeof forceState === 'boolean') ? forceState : !isOpen;
+  if (shouldOpen) {
+    renderWeekDropdownList();
+    dd.classList.remove('hidden-soft');
+  } else {
+    dd.classList.add('hidden-soft');
+  }
+}
+
+function restoreSnapshotQuick(id) {
+  var snap = loadSnapshots().find(function(s) { return s.id === id; });
+  if (!snap) return;
+  // Auto-guardar versión actual antes de restaurar (silencioso)
+  createSnapshot('Auto-guardado · ' + new Date().toLocaleString('es-ES', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }));
+  state = deepClone(snap.data);
+  save();
+  toggleWeekDropdown(false);
+  renderDashboard();
+  showToast('Cargada: ' + snap.label);
+}
+
 // ============================================================
 function openSnapshotSaveModal() {
   var defaultLabel = state.weekLabel;
@@ -1077,9 +1162,64 @@ function deleteDept(key) {
   if (state.activeDept === key) state.activeDept = state.deptOrder[0];
   save(); rerenderTabs(); rerenderDeptArea();
 }
+function openResetModal() {
+  var modal = $('#modal-host');
+  modal.innerHTML =
+    '<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-6 fade-in">' +
+      '<div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">' +
+        '<div class="flex items-start justify-between mb-4">' +
+          '<div>' +
+            '<div class="text-[11px] text-rose-500 uppercase tracking-[0.2em] mb-1">Acción restringida</div>' +
+            '<h2 class="text-xl font-semibold text-slate-900 tracking-tight">Restablecer dashboard</h2>' +
+          '</div>' +
+          '<button data-action="modal-close" class="text-slate-400 hover:text-slate-700">' + ICON.close + '</button>' +
+        '</div>' +
+        '<div class="bg-rose-50 border border-rose-100 rounded-lg p-3 mb-5">' +
+          '<p class="text-sm text-rose-800 leading-relaxed">Esta acción <strong>borrará todos los datos actuales</strong> del WBR y los reemplazará por la plantilla por defecto. Los snapshots guardados <strong>no se ven afectados</strong>.</p>' +
+        '</div>' +
+        '<div class="mb-4">' +
+          '<label class="text-[11px] text-slate-500 uppercase tracking-widest mb-2 block">Contraseña de administrador</label>' +
+          '<div class="relative">' +
+            '<div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">' + ICON.lock + '</div>' +
+            '<input id="reset-pwd" type="password" class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/20" placeholder="Contraseña de reset" autocomplete="off" />' +
+          '</div>' +
+          '<div id="reset-error" class="hidden-soft items-center gap-1.5 mt-2 text-xs text-rose-600">' +
+            '<div class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></div>Contraseña incorrecta' +
+          '</div>' +
+        '</div>' +
+        '<div class="flex justify-end gap-2 mt-6">' +
+          '<button data-action="modal-close" class="text-xs px-4 py-2 border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 rounded-md">Cancelar</button>' +
+          '<button data-action="confirm-reset" class="text-xs px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-md">Restablecer</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  setTimeout(function() { var i = $('#reset-pwd'); if (i) i.focus(); }, 50);
+}
+
+function confirmReset() {
+  var input = $('#reset-pwd');
+  var errEl = $('#reset-error');
+  if (!input) return;
+  var clean = String(input.value || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (clean !== RESET_PASSWORD.toLowerCase()) {
+    errEl.classList.remove('hidden-soft'); errEl.classList.add('flex');
+    input.classList.add('border-rose-300'); input.classList.remove('border-slate-200');
+    input.value = '';
+    setTimeout(function() {
+      if (errEl) { errEl.classList.add('hidden-soft'); errEl.classList.remove('flex'); }
+      if (input) { input.classList.remove('border-rose-300'); input.classList.add('border-slate-200'); input.focus(); }
+    }, 2200);
+    return;
+  }
+  state = defaultData();
+  save();
+  closeModal();
+  renderDashboard();
+  showToast('Dashboard restablecido');
+}
+
 function resetAll() {
-  if (!confirm("¿Restablecer? Esta acción no se puede deshacer (los snapshots guardados no se ven afectados).")) return;
-  state = defaultData(); save(); renderDashboard(); attachEvents();
+  openResetModal();
 }
 
 // ============================================================
@@ -1093,6 +1233,20 @@ function attachEvents() {
 
   root.addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action]');
+
+    // Cerrar dropdown si se hace click fuera
+    var insideWeekSelector = e.target.closest('#week-selector-wrap');
+    if (!insideWeekSelector) {
+      var dd = $('#week-dropdown');
+      if (dd && !dd.classList.contains('hidden-soft')) dd.classList.add('hidden-soft');
+    }
+
+    // Si el click es sobre el contenteditable de la fecha, NO abrir dropdown
+    if (e.target.closest('[data-stop-toggle="1"]')) {
+      // Permitir edición normal, pero no propagar al toggle
+      return;
+    }
+
     if (!btn || btn.tagName === 'SELECT') return;
     var action = btn.dataset.action;
 
@@ -1129,9 +1283,12 @@ function attachEvents() {
       case 'print':              exportPDF(); break;
       case 'logout':             logout(); break;
       case 'reset':              resetAll(); break;
-      case 'snapshot-save':      openSnapshotSaveModal(); break;
+      case 'confirm-reset':      confirmReset(); break;
+      case 'snapshot-save':      toggleWeekDropdown(false); openSnapshotSaveModal(); break;
       case 'snapshot-confirm-save': confirmSnapshotSave(); break;
-      case 'snapshot-list':      openSnapshotListModal(); break;
+      case 'snapshot-list':      toggleWeekDropdown(false); openSnapshotListModal(); break;
+      case 'snapshot-restore-quick': restoreSnapshotQuick(snapId); break;
+      case 'toggle-week-dropdown': toggleWeekDropdown(); break;
       case 'snapshot-restore':
         if (confirm('¿Restaurar esta versión? Los datos actuales se sobreescribirán (puedes guardar una versión antes si quieres).')) {
           restoreSnapshot(snapId); closeModal(); showToast('Versión restaurada');
@@ -1172,6 +1329,9 @@ function attachEvents() {
   root.addEventListener('keydown', function(e) {
     if (e.key === 'Enter' && e.target.matches && e.target.matches('span[data-edit]')) {
       e.preventDefault(); e.target.blur();
+    }
+    if (e.key === 'Enter' && e.target.id === 'reset-pwd') {
+      e.preventDefault(); confirmReset();
     }
     if (e.key === 'Escape') closeModal();
   });
