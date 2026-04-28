@@ -112,6 +112,18 @@ var RESET_PASSWORD = "reset_dashboard";
 var STORAGE_KEY = "wbr-esphera-v3";
 var SNAPSHOTS_KEY = "wbr-esphera-snapshots-v1";
 var SESSION_KEY = "wbr-esphera-session";
+var USER_KEY = "wbr-esphera-user";
+var BIN_ID_KEY = "wbr-esphera-bin-id";
+var SNAP_BIN_ID_KEY = "wbr-esphera-snap-bin-id";
+
+// ──────────── JSONBIN.IO ────────────
+var JSONBIN_KEY = "$2a$10$VVRQgW.noAAVML3Vs83cYOdXVNnAzXvD/aZBnsMjOELdVNSwzcUtq";
+var JSONBIN_API = "https://api.jsonbin.io/v3";
+// Las dos colecciones de datos viven en bins separados creados al primer arranque
+var binIds = {
+  state: localStorage.getItem(BIN_ID_KEY) || null,
+  snapshots: localStorage.getItem(SNAP_BIN_ID_KEY) || null
+};
 
 var STATUS_CONFIG = {
   done:     { label: "Completado", emoji: "✅", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -131,7 +143,8 @@ var ICON = {
   archive:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
   save:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
   close:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-  download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>'
+  download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+  refresh:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
 };
 
 // ============================================================
@@ -164,6 +177,170 @@ function formatDateTime(ts) {
   return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }) + ' · ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ============================================================
+// JSONBIN API LAYER
+// ============================================================
+var syncStatus = 'idle'; // 'idle' | 'syncing' | 'error' | 'offline'
+var lastSyncAt = null;
+var pendingSync = false;
+var syncDebounceTimer = null;
+
+function jbHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'X-Master-Key': JSONBIN_KEY,
+    'X-Bin-Versioning': 'false'
+  };
+}
+
+function jbCreateBin(payload, name) {
+  return fetch(JSONBIN_API + '/b', {
+    method: 'POST',
+    headers: Object.assign({}, jbHeaders(), { 'X-Bin-Name': name, 'X-Bin-Private': 'true' }),
+    body: JSON.stringify(payload)
+  }).then(function(r) {
+    if (!r.ok) throw new Error('JSONBin create failed: ' + r.status);
+    return r.json();
+  });
+}
+
+function jbReadBin(binId) {
+  return fetch(JSONBIN_API + '/b/' + binId + '/latest', {
+    method: 'GET',
+    headers: jbHeaders()
+  }).then(function(r) {
+    if (!r.ok) throw new Error('JSONBin read failed: ' + r.status);
+    return r.json();
+  });
+}
+
+function jbUpdateBin(binId, payload) {
+  return fetch(JSONBIN_API + '/b/' + binId, {
+    method: 'PUT',
+    headers: jbHeaders(),
+    body: JSON.stringify(payload)
+  }).then(function(r) {
+    if (!r.ok) throw new Error('JSONBin update failed: ' + r.status);
+    return r.json();
+  });
+}
+
+// Asegura que existen bins; si no, los crea con el estado actual
+function ensureBins() {
+  var promises = [];
+  if (!binIds.state) {
+    promises.push(
+      jbCreateBin({ data: state, lastAuthor: getUser(), updatedAt: Date.now() }, 'wbr-esphera-state')
+        .then(function(res) {
+          binIds.state = res.metadata.id;
+          try { localStorage.setItem(BIN_ID_KEY, binIds.state); } catch(e) {}
+        })
+    );
+  }
+  if (!binIds.snapshots) {
+    promises.push(
+      jbCreateBin({ snapshots: loadSnapshotsLocal() }, 'wbr-esphera-snapshots')
+        .then(function(res) {
+          binIds.snapshots = res.metadata.id;
+          try { localStorage.setItem(SNAP_BIN_ID_KEY, binIds.snapshots); } catch(e) {}
+        })
+    );
+  }
+  return Promise.all(promises);
+}
+
+function setSyncStatus(status, msg) {
+  syncStatus = status;
+  var el = $('#sync-status');
+  if (!el) return;
+  var dotColor, label;
+  switch (status) {
+    case 'syncing': dotColor = 'bg-amber-500 pulse-dot'; label = 'Sincronizando…'; break;
+    case 'error':   dotColor = 'bg-rose-500';            label = 'Error de sync'; break;
+    case 'offline': dotColor = 'bg-slate-400';            label = 'Sin conexión'; break;
+    default:        dotColor = 'bg-emerald-500';          label = lastSyncAt ? ('Sincronizado · ' + relativeTime(lastSyncAt)) : 'En la nube';
+  }
+  el.innerHTML = '<div class="w-1.5 h-1.5 rounded-full ' + dotColor + '"></div><span title="' + (msg || '') + '">' + label + '</span>';
+}
+
+function relativeTime(ts) {
+  var diff = Date.now() - ts;
+  if (diff < 30000) return 'ahora';
+  if (diff < 60000) return 'hace <1m';
+  var m = Math.floor(diff / 60000);
+  if (m < 60) return 'hace ' + m + 'm';
+  var h = Math.floor(m / 60);
+  if (h < 24) return 'hace ' + h + 'h';
+  return formatDateTime(ts);
+}
+
+// PULL: trae estado del servidor y reemplaza local (con confirmación si hay cambios externos)
+function syncPull(silent) {
+  if (!binIds.state) return Promise.resolve();
+  setSyncStatus('syncing');
+  return jbReadBin(binIds.state).then(function(res) {
+    var record = res.record;
+    if (record && record.data && record.data.departments) {
+      state = record.data;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+      lastSyncAt = Date.now();
+      if (record.lastAuthor) state.__lastAuthor = record.lastAuthor;
+      if (record.updatedAt)  state.__updatedAt = record.updatedAt;
+    }
+    setSyncStatus('idle');
+    if (!silent) {
+      renderDashboard();
+      showToast('Sincronizado · última edición por ' + (record.lastAuthor || '?'));
+    }
+    return record;
+  }).catch(function(err) {
+    setSyncStatus('error', err.message);
+    if (!silent) showToast('Error al sincronizar: ' + err.message);
+  });
+}
+
+// PUSH: empuja el estado local al servidor (debounced)
+function syncPushDebounced() {
+  pendingSync = true;
+  setSyncStatus('syncing');
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(function() {
+    syncPushNow();
+  }, 1500);
+}
+
+function syncPushNow() {
+  if (!binIds.state) {
+    return ensureBins().then(syncPushNow);
+  }
+  pendingSync = false;
+  return jbUpdateBin(binIds.state, {
+    data: state,
+    lastAuthor: getUser(),
+    updatedAt: Date.now()
+  }).then(function() {
+    lastSyncAt = Date.now();
+    setSyncStatus('idle');
+  }).catch(function(err) {
+    setSyncStatus('error', err.message);
+  });
+}
+
+function syncSnapshotsPush() {
+  if (!binIds.snapshots) return ensureBins().then(syncSnapshotsPush);
+  return jbUpdateBin(binIds.snapshots, { snapshots: loadSnapshotsLocal() })
+    .catch(function(err) { console.warn('Snapshot sync failed:', err); });
+}
+
+function syncSnapshotsPull() {
+  if (!binIds.snapshots) return Promise.resolve();
+  return jbReadBin(binIds.snapshots).then(function(res) {
+    if (res.record && Array.isArray(res.record.snapshots)) {
+      try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(res.record.snapshots)); } catch (e) {}
+    }
+  }).catch(function(err) { console.warn('Snapshot pull failed:', err); });
+}
 
 // ============================================================
 // DEFAULT DATA
@@ -328,6 +505,7 @@ function save() {
   saveTimer = setTimeout(function() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
     setSaveStatus(true);
+    syncPushDebounced();
   }, 600);
 }
 function setSaveStatus(saved) {
@@ -350,13 +528,16 @@ function setStateAt(path, value) {
 }
 
 // ============================================================
-// SNAPSHOTS / VERSIONES
+// SNAPSHOTS / VERSIONES (compartidas vía JSONBin)
 // ============================================================
-function loadSnapshots() {
+function loadSnapshotsLocal() {
   try {
     var raw = localStorage.getItem(SNAPSHOTS_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (e) { return []; }
+}
+function loadSnapshots() {
+  return loadSnapshotsLocal();
 }
 function saveSnapshots(arr) {
   try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(arr)); return true; } catch (e) { return false; }
@@ -367,16 +548,18 @@ function createSnapshot(label) {
     id: uid("snap"),
     label: label || state.weekLabel,
     createdAt: Date.now(),
-    author: state.author,
+    author: getUser(),
     data: deepClone(state)
   };
-  snapshots.unshift(snap); // más reciente primero
+  snapshots.unshift(snap);
   saveSnapshots(snapshots);
+  syncSnapshotsPush();
   return snap;
 }
 function deleteSnapshot(id) {
   var snapshots = loadSnapshots().filter(function(s) { return s.id !== id; });
   saveSnapshots(snapshots);
+  syncSnapshotsPush();
 }
 function restoreSnapshot(id) {
   var snap = loadSnapshots().find(function(s) { return s.id === id; });
@@ -384,7 +567,6 @@ function restoreSnapshot(id) {
   state = deepClone(snap.data);
   save();
   renderDashboard();
-  attachEvents();
   return true;
 }
 function exportSnapshotJSON(id) {
@@ -400,7 +582,7 @@ function exportSnapshotJSON(id) {
 }
 
 // ============================================================
-// AUTH
+// AUTH + USER IDENTITY
 // ============================================================
 var memSession = false;
 function isAuthed() {
@@ -425,6 +607,22 @@ function logout() {
   memSession = false;
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
   renderRoot();
+}
+
+function getUser() {
+  try { return localStorage.getItem(USER_KEY) || 'Anónimo'; } catch (e) { return 'Anónimo'; }
+}
+function setUser(name) {
+  try { localStorage.setItem(USER_KEY, name); } catch (e) {}
+}
+function hasUser() {
+  try { return !!localStorage.getItem(USER_KEY); } catch (e) { return false; }
+}
+function clearUser() {
+  try { localStorage.removeItem(USER_KEY); } catch (e) {}
+}
+function userInitials(name) {
+  return String(name || '?').trim().split(/\s+/).map(function(p){return p[0];}).slice(0,2).join('').toUpperCase();
 }
 
 // ============================================================
@@ -526,7 +724,7 @@ function reorderFunnelStages(dept, fromIdx, toIdx, pos) {
 }
 
 // ============================================================
-// LOGIN
+// LOGIN + USER ONBOARDING
 // ============================================================
 function renderLogin() {
   $('#root').innerHTML =
@@ -547,7 +745,6 @@ function renderLogin() {
               '<div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10">' + ICON.lock + '</div>' +
               '<input id="login-input" type="password" class="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" placeholder="esphera2026" autocomplete="off" />' +
             '</div>' +
-            '<div class="text-[10px] text-slate-400 mt-1.5">Pista: <span class="font-mono text-slate-600">esphera2026</span></div>' +
             '<div id="login-error" class="hidden-soft items-center gap-1.5 mt-2 text-xs text-rose-600">' +
               '<div class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></div>Contraseña incorrecta' +
             '</div>' +
@@ -576,6 +773,41 @@ function renderLogin() {
   form.addEventListener('submit', tryLogin);
   btn.addEventListener('click', tryLogin);
   input.addEventListener('keypress', function(e) { if (e.key === 'Enter') tryLogin(e); });
+}
+
+function renderUserOnboarding() {
+  $('#root').innerHTML =
+    '<div class="min-h-screen grid-bg flex items-center justify-center p-6">' +
+      '<div class="w-full max-w-md fade-in">' +
+        '<div class="flex items-center gap-2 mb-12">' +
+          '<div class="w-2.5 h-2.5 rounded-full bg-slate-900"></div>' +
+          '<span class="text-sm font-medium text-slate-900 tracking-tight lowercase">esphera</span>' +
+          '<span class="text-xs text-slate-400 tracking-tight">.ai</span>' +
+        '</div>' +
+        '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3">00b · Identifícate</div>' +
+        '<h1 class="text-3xl font-semibold text-slate-900 tracking-tight mb-2">¿Cómo te llamas?</h1>' +
+        '<p class="text-slate-500 text-sm mb-10 leading-relaxed">Tu nombre se usará para identificar quién hace cada cambio.<br/>Cada miembro del equipo solo lo escribe una vez en su navegador.</p>' +
+        '<form id="user-form" class="space-y-4">' +
+          '<div>' +
+            '<label class="text-[11px] text-slate-500 uppercase tracking-widest mb-2 block">Tu nombre</label>' +
+            '<input id="user-input" type="text" class="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" placeholder="Ej. María García" autocomplete="off" />' +
+          '</div>' +
+          '<button id="user-btn" type="button" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-lg text-sm font-medium tracking-tight cursor-pointer">Continuar</button>' +
+        '</form>' +
+      '</div>' +
+    '</div>';
+  setTimeout(function(){ var i = $('#user-input'); if (i) i.focus(); }, 50);
+  var form = $('#user-form'), input = $('#user-input'), btn = $('#user-btn');
+  function tryContinue(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    var name = (input.value || '').trim();
+    if (!name) { input.focus(); return; }
+    setUser(name);
+    renderRoot();
+  }
+  form.addEventListener('submit', tryContinue);
+  btn.addEventListener('click', tryContinue);
+  input.addEventListener('keypress', function(e) { if (e.key === 'Enter') tryContinue(e); });
 }
 
 // ============================================================
@@ -735,16 +967,19 @@ function renderDashboard() {
           '</a>' +
           '<div class="hidden md:flex items-center gap-3 text-xs text-slate-500">' +
             '<span class="text-slate-300">|</span><span>Weekly Review</span><span class="text-slate-300">|</span>' +
-            '<div class="flex items-center gap-1.5"><div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>' +
-              '<span contenteditable="true" data-edit="author" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.author) + '</span>' +
+            '<div class="flex items-center gap-2">' +
+              '<div class="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px] font-medium" title="' + escapeHTML(getUser()) + '">' + escapeHTML(userInitials(getUser())) + '</div>' +
+              '<span class="text-slate-700 font-medium">' + escapeHTML(getUser()) + '</span>' +
+              '<button data-action="change-user" class="text-[10px] text-slate-400 hover:text-slate-700 underline" title="Cambiar nombre">cambiar</button>' +
             '</div>' +
           '</div>' +
           '<div class="flex items-center gap-2">' +
-            '<div id="save-status" class="hidden sm:flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-slate-400 mr-2">' +
-              '<div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div><span>Guardado</span>' +
+            '<div id="sync-status" class="hidden md:flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-slate-400 mr-2">' +
+              '<div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div><span>En la nube</span>' +
             '</div>' +
-            '<button data-action="snapshot-save" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Guardar versión de esta semana">' + ICON.save + '<span class="hidden sm:inline">Guardar versión</span></button>' +
-            '<button data-action="snapshot-list" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Histórico de versiones">' + ICON.archive + '<span class="hidden sm:inline">Histórico</span></button>' +
+            '<button data-action="sync-pull" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Traer cambios del servidor">' + ICON.refresh + '<span class="hidden lg:inline">Sincronizar</span></button>' +
+            '<button data-action="snapshot-save" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Guardar versión">' + ICON.save + '</button>' +
+            '<button data-action="snapshot-list" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Histórico">' + ICON.archive + '</button>' +
             '<button data-action="print" class="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md">' + ICON.print + '<span class="hidden sm:inline">PDF</span></button>' +
             '<button data-action="logout" class="text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 rounded-md">Salir</button>' +
           '</div>' +
@@ -1282,6 +1517,10 @@ function attachEvents() {
       case 'delete-dept':        deleteDept(btn.dataset.key); break;
       case 'print':              exportPDF(); break;
       case 'logout':             logout(); break;
+      case 'change-user':
+        if (confirm('¿Cambiar tu nombre de usuario?')) { clearUser(); renderRoot(); }
+        break;
+      case 'sync-pull':          syncPull(false); break;
       case 'reset':              resetAll(); break;
       case 'confirm-reset':      confirmReset(); break;
       case 'snapshot-save':      toggleWeekDropdown(false); openSnapshotSaveModal(); break;
@@ -1346,8 +1585,22 @@ function attachEvents() {
 // ROOT
 // ============================================================
 function renderRoot() {
-  if (!isAuthed()) renderLogin();
-  else { renderDashboard(); attachEvents(); }
+  if (!isAuthed()) { renderLogin(); return; }
+  if (!hasUser())  { renderUserOnboarding(); return; }
+  renderDashboard();
+  attachEvents();
+
+  // Sync inicial: asegurar bins + traer estado del servidor
+  ensureBins().then(function() {
+    return syncPull(true);
+  }).then(function() {
+    renderDashboard();
+    setSyncStatus('idle');
+    syncSnapshotsPull();
+  }).catch(function(err) {
+    setSyncStatus('error', err.message);
+    showToast('Trabajando en local — sin conexión con el servidor');
+  });
 }
 window.__appLoaded = true;
 renderRoot();
