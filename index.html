@@ -119,11 +119,20 @@ var SNAP_BIN_ID_KEY = "wbr-esphera-snap-bin-id";
 // ──────────── JSONBIN.IO ────────────
 var JSONBIN_KEY = "$2a$10$VVRQgW.noAAVML3Vs83cYOdXVNnAzXvD/aZBnsMjOELdVNSwzcUtq";
 var JSONBIN_API = "https://api.jsonbin.io/v3";
-// Las dos colecciones de datos viven en bins separados creados al primer arranque
+
+// IDs FIJOS — todos los navegadores apuntan al MISMO bin compartido
+var SHARED_BIN_STATE = "69f09c58aaba88219748e00d";
+var SHARED_BIN_SNAPSHOTS = "69f09c59aaba88219748e014";
+
+// Migración: si hay un binId guardado en localStorage de una versión anterior, lo ignoramos
+// y usamos los IDs compartidos hardcodeados.
 var binIds = {
-  state: localStorage.getItem(BIN_ID_KEY) || null,
-  snapshots: localStorage.getItem(SNAP_BIN_ID_KEY) || null
+  state: SHARED_BIN_STATE,
+  snapshots: SHARED_BIN_SNAPSHOTS
 };
+// Limpieza de IDs viejos por si quedan en localStorage (no rompe nada si no existen)
+try { localStorage.removeItem(BIN_ID_KEY); } catch(e) {}
+try { localStorage.removeItem(SNAP_BIN_ID_KEY); } catch(e) {}
 
 var STATUS_CONFIG = {
   done:     { label: "Completado", emoji: "✅", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -226,28 +235,23 @@ function jbUpdateBin(binId, payload) {
   });
 }
 
-// Asegura que existen bins; si no, los crea con el estado actual
+// Como los bins son fijos y compartidos, no hay nada que crear.
+// Solo nos aseguramos de que tienen contenido inicial si están vacíos.
 function ensureBins() {
-  var promises = [];
-  if (!binIds.state) {
-    promises.push(
-      jbCreateBin({ data: state, lastAuthor: getUser(), updatedAt: Date.now() }, 'wbr-esphera-state')
-        .then(function(res) {
-          binIds.state = res.metadata.id;
-          try { localStorage.setItem(BIN_ID_KEY, binIds.state); } catch(e) {}
-        })
-    );
-  }
-  if (!binIds.snapshots) {
-    promises.push(
-      jbCreateBin({ snapshots: loadSnapshotsLocal() }, 'wbr-esphera-snapshots')
-        .then(function(res) {
-          binIds.snapshots = res.metadata.id;
-          try { localStorage.setItem(SNAP_BIN_ID_KEY, binIds.snapshots); } catch(e) {}
-        })
-    );
-  }
-  return Promise.all(promises);
+  // Comprobar que el bin de state tiene datos. Si está vacío (data: null), subir los datos actuales.
+  return jbReadBin(binIds.state).then(function(res) {
+    var record = res.record;
+    if (!record || !record.data || !record.data.departments) {
+      // Bin vacío → subir nuestros datos locales como semilla compartida
+      return jbUpdateBin(binIds.state, {
+        data: state,
+        lastAuthor: getUser(),
+        updatedAt: Date.now()
+      });
+    }
+  }).catch(function(err) {
+    console.warn('ensureBins state check failed:', err);
+  });
 }
 
 function setSyncStatus(status, msg) {
