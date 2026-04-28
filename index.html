@@ -16,7 +16,8 @@
   })();
 </script>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; background: #fafafa; }
@@ -45,32 +46,39 @@
   .drop-left  { box-shadow: inset 3px 0 0 0 #0f172a; }
   .drop-right { box-shadow: inset -3px 0 0 0 #0f172a; }
 
-  @media print {
-    .no-print { display: none !important; }
-    .dept-content { display: block !important; page-break-before: always; padding-top: 24px; }
-    .dept-content:first-of-type { page-break-before: auto; }
-    .dept-print-title { display: block !important; }
-    .drag-handle { display: none !important; }
-    footer { display: none !important; }
+  /* PDF EXPORT — Off-screen render */
+  #pdf-stage {
+    position: fixed;
+    left: -10000px;
+    top: 0;
+    width: 1123px; /* A4 landscape @ 96dpi (297mm) */
+    background: white;
+    z-index: -1;
+    pointer-events: none;
   }
-  body.exporting { background: white !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-  body.exporting .min-h-screen { min-height: auto !important; background: white !important; }
-  body.exporting .no-print { display: none !important; }
-  body.exporting .dept-content { display: block !important; padding: 24px 32px !important; }
-  body.exporting .dept-content:first-of-type { padding-top: 0 !important; }
-  body.exporting .dept-content:not(:first-of-type) { page-break-before: always; break-before: page; }
-  body.exporting .dept-print-title { display: block !important; padding-left: 8px !important; padding-right: 8px !important; box-sizing: border-box; }
-  body.exporting .drag-handle { display: none !important; }
-  body.exporting .sticky { position: static !important; }
-  body.exporting footer { display: none !important; }
-  body.exporting [contenteditable] { margin-left: 0 !important; margin-right: 0 !important; }
-  body.exporting .max-w-5xl { max-width: none !important; padding-left: 8px !important; padding-right: 8px !important; }
-  .dept-print-title { display: none; }
+  .pdf-page {
+    width: 1123px;
+    height: 794px; /* A4 landscape @ 96dpi (210mm) */
+    padding: 48px 56px;
+    box-sizing: border-box;
+    background: white;
+    color: #0f172a;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .pdf-page:last-child { page-break-after: auto; }
+
+  /* MODAL */
+  .modal-backdrop { background: rgba(15,23,42,0.4); backdrop-filter: blur(2px); }
 </style>
 </head>
 <body>
 
 <div id="root"></div>
+<div id="pdf-stage"></div>
 
 <script>
 "use strict";
@@ -80,6 +88,7 @@
 // ============================================================
 var PASSWORD = "esphera2026";
 var STORAGE_KEY = "wbr-esphera-v3";
+var SNAPSHOTS_KEY = "wbr-esphera-snapshots-v1";
 var SESSION_KEY = "wbr-esphera-session";
 
 var STATUS_CONFIG = {
@@ -96,7 +105,11 @@ var ICON = {
   print:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
   lock:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   grip:     '<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="2" cy="3" r="1"/><circle cx="2" cy="7" r="1"/><circle cx="2" cy="11" r="1"/><circle cx="8" cy="3" r="1"/><circle cx="8" cy="7" r="1"/><circle cx="8" cy="11" r="1"/></svg>',
-  gripH:    '<svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="11" cy="2" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/><circle cx="11" cy="8" r="1"/></svg>'
+  gripH:    '<svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="11" cy="2" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/><circle cx="11" cy="8" r="1"/></svg>',
+  archive:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+  save:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
+  close:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>'
 };
 
 // ============================================================
@@ -109,8 +122,8 @@ function escapeHTML(str) {
     return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[m];
   });
 }
-function getWeekNumber() {
-  var d = new Date();
+function getWeekNumber(date) {
+  var d = date || new Date();
   var yearStart = new Date(d.getFullYear(), 0, 1);
   return Math.ceil(((d - yearStart) / 86400000 + yearStart.getDay() + 1) / 7);
 }
@@ -120,6 +133,15 @@ function pct(num, denom) {
   if (!denom || denom <= 0) return '—';
   return Math.round((num / denom) * 100) + '%';
 }
+function formatDate(ts) {
+  var d = new Date(ts);
+  return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function formatDateTime(ts) {
+  var d = new Date(ts);
+  return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }) + ' · ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
 
 // ============================================================
 // DEFAULT DATA
@@ -152,23 +174,16 @@ function defaultData() {
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen ejecutivo",
-            content: "Pipeline robusto en €312k (+€32k vs semana anterior). 4 contratos firmados — incluido el primer cliente enterprise. Foco en desbloquear A3 antes del jueves.",
+            content: "Pipeline robusto en €312k (+€32k vs semana anterior). 4 contratos firmados — incluido el primer cliente enterprise.",
             items: [] },
-          { id: uid("s"), number: "02", title: "Pipeline",
-            content: "Tracción sostenida en cuentas Tier 1.",
-            items: [
-              { id: uid("i"), status: "progress", text: "Demo CEGID con prospect Tier 1 — pendiente de feedback comercial" },
-              { id: uid("i"), status: "progress", text: "3 oportunidades nuevas en fase discovery (Servicios Industriales, Holding Médico, Logística Sur)" }
-            ] },
-          { id: uid("s"), number: "03", title: "Cerrados esta semana",
+          { id: uid("s"), number: "02", title: "Cerrados esta semana",
             content: "Total semana: €46k en nuevos contratos.",
             items: [
               { id: uid("i"), status: "done", text: "Distribuciones López — €18k anual" },
               { id: uid("i"), status: "done", text: "Construcciones Bilbao — €12k anual" },
-              { id: uid("i"), status: "done", text: "Logística Mar — €9k anual" },
-              { id: uid("i"), status: "done", text: "Talleres Norte — €7k anual" }
+              { id: uid("i"), status: "done", text: "Logística Mar — €9k anual" }
             ] },
-          { id: uid("s"), number: "04", title: "Bloqueantes y próximos pasos",
+          { id: uid("s"), number: "03", title: "Bloqueantes",
             content: "Riesgo principal: dependencia de A3 para demos estructurales.",
             items: [
               { id: uid("i"), status: "blocked", text: "Acceso a BBDD A3 sigue bloqueado por Salvador Marco — escalar miércoles" }
@@ -185,7 +200,7 @@ function defaultData() {
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen",
-            content: "Crecimiento sostenido en leads cualificados. CAC bajando por mejor mix de canales. Blog ganando tracción orgánica.",
+            content: "Crecimiento sostenido en leads cualificados. CAC bajando por mejor mix de canales.",
             items: [] },
           { id: uid("s"), number: "02", title: "Campañas activas",
             content: "Performance LinkedIn por encima de media de mercado.",
@@ -197,14 +212,7 @@ function defaultData() {
             content: "Tracción orgánica en aumento — blog supera 4k visitas/mes.",
             items: [
               { id: uid("i"), status: "done",     text: "3 artículos publicados — 'Software contable IA' entra en top 10 SERP" },
-              { id: uid("i"), status: "done",     text: "Webinar 'IA para contables' con 142 asistentes (vs 80 estimado)" },
-              { id: uid("i"), status: "progress", text: "Calendario editorial Q2 en revisión con dirección" }
-            ] },
-          { id: uid("s"), number: "04", title: "Eventos y partnerships",
-            content: "Posicionamiento en eventos clave del sector contable.",
-            items: [
-              { id: uid("i"), status: "done",     text: "Sponsorship Asecu Forum confirmado — slot keynote 18min" },
-              { id: uid("i"), status: "progress", text: "Partnership con AECA en negociación — propuesta enviada" }
+              { id: uid("i"), status: "done",     text: "Webinar 'IA para contables' con 142 asistentes (vs 80 estimado)" }
             ] }
         ]
       },
@@ -218,25 +226,18 @@ function defaultData() {
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen",
-            content: "Mes superando presupuesto, runway extendido tras renegociación de costes. Margen bruto en máximos.",
+            content: "Mes superando presupuesto, runway extendido tras renegociación de costes.",
             items: [] },
-          { id: uid("s"), number: "02", title: "Facturación e ingresos",
-            content: "Marzo cerrado por encima de objetivo, abril en buen ritmo.",
-            items: [
-              { id: uid("i"), status: "done",     text: "Marzo cerrado en €58.5k (+4% sobre presupuesto)" },
-              { id: uid("i"), status: "progress", text: "Abril en curso — €42k facturados, proyección €61k" }
-            ] },
-          { id: uid("s"), number: "03", title: "Cobros y morosidad",
+          { id: uid("s"), number: "02", title: "Cobros y morosidad",
             content: "Dos clientes en mora, importe gestionable.",
             items: [
               { id: uid("i"), status: "blocked",  text: "Construcciones Vega — €2.4k pendiente >60 días, paso a recobro" },
               { id: uid("i"), status: "progress", text: "Auto Repuestos Sur — €1.8k pendiente, contactado por comercial" }
             ] },
-          { id: uid("s"), number: "04", title: "Tesorería y costes",
+          { id: uid("s"), number: "03", title: "Tesorería y costes",
             content: "Optimización de costes cloud con impacto directo en burn.",
             items: [
-              { id: uid("i"), status: "done",     text: "Renegociación AWS cerrada — ahorro €3k/mes (reserved instances)" },
-              { id: uid("i"), status: "progress", text: "Auditoría SaaS internos — identificadas 4 herramientas duplicadas" }
+              { id: uid("i"), status: "done",     text: "Renegociación AWS cerrada — ahorro €3k/mes" }
             ] }
         ]
       },
@@ -250,26 +251,18 @@ function defaultData() {
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen",
-            content: "Sprint 12 cerrado al 92%. Foco siguiente sprint: motor de extracción IVA y panel multicliente. Uptime estable.",
+            content: "Sprint 12 cerrado al 92%. Foco siguiente sprint: motor de extracción IVA.",
             items: [] },
           { id: uid("s"), number: "02", title: "Sprint actual",
             content: "Avance sólido en backlog de producto.",
             items: [
               { id: uid("i"), status: "done",     text: "Estados de pago añadidos a la interfaz" },
-              { id: uid("i"), status: "done",     text: "Campo teléfono añadido al formulario de demo" },
-              { id: uid("i"), status: "progress", text: "Exportación de datos de empresa a CSV/Excel — entrega prevista lunes" }
+              { id: uid("i"), status: "progress", text: "Exportación de datos de empresa a CSV/Excel" }
             ] },
-          { id: uid("s"), number: "03", title: "Releases y producto",
-            content: "v2.4 en preparación con mejoras de extracción.",
-            items: [
-              { id: uid("i"), status: "progress", text: "v2.4 prevista para próxima semana — motor de extracción IVA mejorado +8% precisión" },
-              { id: uid("i"), status: "progress", text: "Migración de Scribe a Esphera Academy en preparación" }
-            ] },
-          { id: uid("s"), number: "04", title: "Infraestructura",
+          { id: uid("s"), number: "03", title: "Infraestructura",
             content: "Latencia y uptime en mejora continua.",
             items: [
-              { id: uid("i"), status: "done",     text: "Migración a nodos EU completada — latencia media -32ms" },
-              { id: uid("i"), status: "progress", text: "Hardening de seguridad GDPR — auditoría externa programada para mayo" }
+              { id: uid("i"), status: "done", text: "Migración a nodos EU completada — latencia media -32ms" }
             ] }
         ]
       }
@@ -282,7 +275,6 @@ function defaultData() {
 // ============================================================
 function migrateState(s) {
   if (!s || !s.departments) return s;
-  // Añadir funnel a ventas si falta
   if (s.departments.ventas && !s.departments.ventas.funnel) {
     s.departments.ventas.funnel = {
       stages: [
@@ -304,7 +296,6 @@ try {
   state = (raw && JSON.parse(raw)) || defaultData();
   if (!state.departments || !state.deptOrder) state = defaultData();
   state = migrateState(state);
-  // Persistir migración
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
 } catch (e) { state = defaultData(); }
 
@@ -317,7 +308,6 @@ function save() {
     setSaveStatus(true);
   }, 600);
 }
-
 function setSaveStatus(saved) {
   var el = $('#save-status');
   if (!el) return;
@@ -325,7 +315,6 @@ function setSaveStatus(saved) {
     ? '<div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div><span>Guardado</span>'
     : '<div class="w-1.5 h-1.5 rounded-full bg-amber-500 pulse-dot"></div><span>Guardando…</span>';
 }
-
 function setStateAt(path, value) {
   var parts = path.split('.');
   var target = state;
@@ -336,6 +325,56 @@ function setStateAt(path, value) {
   var lastKey = isNaN(parts[parts.length - 1]) ? parts[parts.length - 1] : parseInt(parts[parts.length - 1]);
   target[lastKey] = value;
   save();
+}
+
+// ============================================================
+// SNAPSHOTS / VERSIONES
+// ============================================================
+function loadSnapshots() {
+  try {
+    var raw = localStorage.getItem(SNAPSHOTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+function saveSnapshots(arr) {
+  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(arr)); return true; } catch (e) { return false; }
+}
+function createSnapshot(label) {
+  var snapshots = loadSnapshots();
+  var snap = {
+    id: uid("snap"),
+    label: label || state.weekLabel,
+    createdAt: Date.now(),
+    author: state.author,
+    data: deepClone(state)
+  };
+  snapshots.unshift(snap); // más reciente primero
+  saveSnapshots(snapshots);
+  return snap;
+}
+function deleteSnapshot(id) {
+  var snapshots = loadSnapshots().filter(function(s) { return s.id !== id; });
+  saveSnapshots(snapshots);
+}
+function restoreSnapshot(id) {
+  var snap = loadSnapshots().find(function(s) { return s.id === id; });
+  if (!snap) return false;
+  state = deepClone(snap.data);
+  save();
+  renderDashboard();
+  attachEvents();
+  return true;
+}
+function exportSnapshotJSON(id) {
+  var snap = loadSnapshots().find(function(s) { return s.id === id; });
+  if (!snap) return;
+  var blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'wbr-' + snap.label.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ============================================================
@@ -369,23 +408,17 @@ function logout() {
 // ============================================================
 // DRAG & DROP
 // ============================================================
-var dragInfo = null;
-var lastDropTarget = null;
-var lastDropPos = null;
+var dragInfo = null, lastDropTarget = null, lastDropPos = null;
 
 function clearAllDropIndicators() {
   $$('.drop-above, .drop-below, .drop-left, .drop-right').forEach(function(el) {
     el.classList.remove('drop-above', 'drop-below', 'drop-left', 'drop-right');
   });
 }
-
 function dragStart(e) {
   var item = e.target.closest('[data-drag-type]');
   if (!item) return;
-  if (e.target.closest('[contenteditable="true"]')) {
-    e.preventDefault();
-    return;
-  }
+  if (e.target.closest('[contenteditable="true"]')) { e.preventDefault(); return; }
   dragInfo = {
     type: item.dataset.dragType,
     dept: item.dataset.dept || null,
@@ -398,7 +431,6 @@ function dragStart(e) {
   try { e.dataTransfer.setData('text/plain', dragInfo.type); } catch (err) {}
   setTimeout(function() { item.classList.add('dragging'); }, 0);
 }
-
 function dragOver(e) {
   if (!dragInfo) return;
   var item = e.target.closest('[data-drag-type="' + dragInfo.type + '"]');
@@ -406,16 +438,13 @@ function dragOver(e) {
   if (item.classList.contains('dragging')) return;
   if (dragInfo.type !== 'tab' && item.dataset.dept !== dragInfo.dept) return;
   if (dragInfo.type === 'item' && parseInt(item.dataset.dragSIdx) !== dragInfo.sIdx) return;
-
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
-
   var rect = item.getBoundingClientRect();
   var horizontal = dragInfo.type === 'tab';
   var pos = horizontal
     ? (e.clientX < (rect.left + rect.width / 2) ? 'left' : 'right')
     : (e.clientY < (rect.top + rect.height / 2) ? 'above' : 'below');
-
   if (lastDropTarget !== item || lastDropPos !== pos) {
     if (lastDropTarget) lastDropTarget.classList.remove('drop-above','drop-below','drop-left','drop-right');
     item.classList.add('drop-' + pos);
@@ -423,13 +452,11 @@ function dragOver(e) {
     lastDropPos = pos;
   }
 }
-
 function dropHandler(e) {
   if (!dragInfo || !lastDropTarget) { dragEnd(); return; }
   e.preventDefault();
   var target = lastDropTarget;
   var pos = lastDropPos;
-
   switch (dragInfo.type) {
     case 'tab':           reorderTabs(dragInfo.key, target.dataset.dragKey, pos); break;
     case 'kpi':           reorderKpis(dragInfo.dept, dragInfo.idx, parseInt(target.dataset.dragIdx), pos); break;
@@ -439,15 +466,11 @@ function dropHandler(e) {
   }
   dragEnd();
 }
-
 function dragEnd() {
   $$('.dragging').forEach(function(el) { el.classList.remove('dragging'); });
   clearAllDropIndicators();
-  dragInfo = null;
-  lastDropTarget = null;
-  lastDropPos = null;
+  dragInfo = null; lastDropTarget = null; lastDropPos = null;
 }
-
 function reorderArrayMove(arr, fromIdx, toIdx, pos) {
   if (fromIdx === toIdx) return;
   var item = arr[fromIdx];
@@ -456,40 +479,28 @@ function reorderArrayMove(arr, fromIdx, toIdx, pos) {
   if (fromIdx < toIdx) toIdx--;
   arr.splice(toIdx, 0, item);
 }
-
 function reorderTabs(srcKey, targetKey, pos) {
   if (srcKey === targetKey) return;
-  var fromIdx = state.deptOrder.indexOf(srcKey);
-  var toIdx = state.deptOrder.indexOf(targetKey);
-  reorderArrayMove(state.deptOrder, fromIdx, toIdx, pos);
+  reorderArrayMove(state.deptOrder, state.deptOrder.indexOf(srcKey), state.deptOrder.indexOf(targetKey), pos);
   state.deptOrder.forEach(function(key, i) { state.departments[key].number = pad2(i + 1); });
-  save();
-  rerenderTabs();
+  save(); rerenderTabs();
 }
-
 function reorderKpis(dept, fromIdx, toIdx, pos) {
   reorderArrayMove(state.departments[dept].kpis, fromIdx, toIdx, pos);
-  save();
-  rerenderDept(dept);
+  save(); rerenderDept(dept);
 }
-
 function reorderSections(dept, fromIdx, toIdx, pos) {
   reorderArrayMove(state.departments[dept].sections, fromIdx, toIdx, pos);
   state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); });
-  save();
-  rerenderDept(dept);
+  save(); rerenderDept(dept);
 }
-
 function reorderItems(dept, sIdx, fromIdx, toIdx, pos) {
   reorderArrayMove(state.departments[dept].sections[sIdx].items, fromIdx, toIdx, pos);
-  save();
-  rerenderDept(dept);
+  save(); rerenderDept(dept);
 }
-
 function reorderFunnelStages(dept, fromIdx, toIdx, pos) {
   reorderArrayMove(state.departments[dept].funnel.stages, fromIdx, toIdx, pos);
-  save();
-  rerenderDept(dept);
+  save(); rerenderDept(dept);
 }
 
 // ============================================================
@@ -512,69 +523,41 @@ function renderLogin() {
             '<label class="text-[11px] text-slate-500 uppercase tracking-widest mb-2 block">Contraseña del equipo</label>' +
             '<div class="relative">' +
               '<div class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10">' + ICON.lock + '</div>' +
-              '<input id="login-input" type="password" class="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 transition-all" placeholder="esphera2026" autocomplete="off" />' +
+              '<input id="login-input" type="password" class="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" placeholder="esphera2026" autocomplete="off" />' +
             '</div>' +
             '<div class="text-[10px] text-slate-400 mt-1.5">Pista: <span class="font-mono text-slate-600">esphera2026</span></div>' +
             '<div id="login-error" class="hidden-soft items-center gap-1.5 mt-2 text-xs text-rose-600">' +
               '<div class="w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot"></div>Contraseña incorrecta' +
             '</div>' +
           '</div>' +
-          '<button id="login-btn" type="button" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-lg text-sm font-medium tracking-tight transition-colors cursor-pointer">Entrar</button>' +
+          '<button id="login-btn" type="button" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-lg text-sm font-medium tracking-tight cursor-pointer">Entrar</button>' +
         '</form>' +
-        '<div class="mt-12 pt-6 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">' +
-          '<span>Dashboard interno</span>' +
-          '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700 transition-colors">esphera.ai ↗</a>' +
-        '</div>' +
       '</div>' +
     '</div>';
-
   setTimeout(function(){ var i = $('#login-input'); if (i) i.focus(); }, 50);
-
-  var form = $('#login-form');
-  var input = $('#login-input');
-  var btn = $('#login-btn');
-  var errEl = $('#login-error');
-
+  var form = $('#login-form'), input = $('#login-input'), btn = $('#login-btn'), errEl = $('#login-error');
   function showLoginError() {
-    if (errEl) { errEl.classList.remove('hidden-soft'); errEl.classList.add('flex'); }
-    if (input) { input.classList.add('border-rose-300'); input.classList.remove('border-slate-200'); }
+    errEl.classList.remove('hidden-soft'); errEl.classList.add('flex');
+    input.classList.add('border-rose-300'); input.classList.remove('border-slate-200');
     setTimeout(function() {
-      if (errEl) { errEl.classList.add('hidden-soft'); errEl.classList.remove('flex'); }
-      if (input) { input.classList.remove('border-rose-300'); input.classList.add('border-slate-200'); }
+      errEl.classList.add('hidden-soft'); errEl.classList.remove('flex');
+      input.classList.remove('border-rose-300'); input.classList.add('border-slate-200');
     }, 2200);
   }
-
   function tryLogin(e) {
     if (e && e.preventDefault) e.preventDefault();
-    if (!input) return;
     var pwd = input.value;
-    if (btn) { btn.textContent = "Verificando…"; btn.disabled = true; }
-    try {
-      if (authenticate(pwd)) {
-        try { renderRoot(); }
-        catch (renderErr) {
-          document.body.innerHTML = '<div style="padding:40px;font-family:monospace;color:#991b1b;background:#fef2f2;min-height:100vh;"><h2 style="font-size:18px;margin-bottom:16px;">Error al renderizar el dashboard</h2><pre style="background:#fff;padding:16px;border-radius:8px;font-size:12px;overflow:auto;white-space:pre-wrap;">' + (renderErr.message || renderErr) + '\n\n' + (renderErr.stack || '') + '</pre></div>';
-        }
-      } else {
-        if (btn) { btn.textContent = "Entrar"; btn.disabled = false; }
-        showLoginError();
-      }
-    } catch (authErr) {
-      if (btn) { btn.textContent = "Entrar"; btn.disabled = false; }
-    }
+    btn.textContent = "Verificando…"; btn.disabled = true;
+    if (authenticate(pwd)) { renderRoot(); }
+    else { btn.textContent = "Entrar"; btn.disabled = false; showLoginError(); }
   }
-
-  if (form) form.addEventListener('submit', tryLogin);
-  if (btn)  btn.addEventListener('click', tryLogin);
-  if (input) {
-    input.addEventListener('keypress', function(e) { if (e.key === 'Enter') tryLogin(e); });
-    input.addEventListener('keydown',  function(e) { if (e.key === 'Enter') tryLogin(e); });
-  }
-  window.__tryLogin = tryLogin;
+  form.addEventListener('submit', tryLogin);
+  btn.addEventListener('click', tryLogin);
+  input.addEventListener('keypress', function(e) { if (e.key === 'Enter') tryLogin(e); });
 }
 
 // ============================================================
-// RENDER: KPI / SECTION / ITEM
+// RENDER: KPI / SECTION / ITEM (en pantalla)
 // ============================================================
 function renderKpiCard(kpi, idx, dept) {
   var trendColor = kpi.trend === "up" ? "text-emerald-600" : "text-rose-600";
@@ -582,18 +565,17 @@ function renderKpiCard(kpi, idx, dept) {
   var prefix = 'departments.' + dept + '.kpis.' + idx;
   return '' +
     '<div draggable="true" data-drag-type="kpi" data-dept="' + dept + '" data-drag-idx="' + idx + '" class="group relative bg-white border border-slate-200 rounded-xl p-5 hover:shadow-sm transition-shadow">' +
-      '<div class="absolute top-2 left-2 drag-handle no-print text-slate-400" title="Arrastrar para reordenar">' + ICON.grip + '</div>' +
-      '<button data-action="delete-kpi" data-dept="' + dept + '" data-idx="' + idx + '" class="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 transition-all no-print" title="Eliminar KPI">' + ICON.trash + '</button>' +
+      '<div class="absolute top-2 left-2 drag-handle no-print text-slate-400" title="Arrastrar">' + ICON.grip + '</div>' +
+      '<button data-action="delete-kpi" data-dept="' + dept + '" data-idx="' + idx + '" class="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 no-print">' + ICON.trash + '</button>' +
       '<div class="text-[10px] uppercase tracking-widest text-slate-400 mb-2 mt-3"><span contenteditable="true" data-edit="' + prefix + '.label" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.label) + '</span></div>' +
       '<div class="text-2xl font-semibold text-slate-900 tracking-tight mb-1"><span contenteditable="true" data-edit="' + prefix + '.value" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.value) + '</span></div>' +
       '<div class="flex items-center gap-1.5 text-xs">' +
         '<button data-action="toggle-trend" data-dept="' + dept + '" data-idx="' + idx + '" class="' + trendColor + ' no-print">' + trendIcon + '</button>' +
         '<span class="' + trendColor + '"><span contenteditable="true" data-edit="' + prefix + '.delta" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.delta) + '</span></span>' +
-        '<span class="text-slate-400">vs sem. anterior</span>' +
+        '<span class="text-slate-400">vs sem. ant.</span>' +
       '</div>' +
     '</div>';
 }
-
 function renderItem(item, sIdx, iIdx, dept) {
   var cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG.progress;
   var optionHTML = ['done','progress','blocked'].map(function(k) {
@@ -604,87 +586,65 @@ function renderItem(item, sIdx, iIdx, dept) {
   var prefix = 'departments.' + dept + '.sections.' + sIdx + '.items.' + iIdx;
   return '' +
     '<li draggable="true" data-drag-type="item" data-dept="' + dept + '" data-drag-s-idx="' + sIdx + '" data-drag-i-idx="' + iIdx + '" class="group/item flex items-start gap-2 py-2 border-b border-slate-100 last:border-0">' +
-      '<span class="drag-handle no-print text-slate-400 mt-2.5" title="Arrastrar">' + ICON.grip + '</span>' +
+      '<span class="drag-handle no-print text-slate-400 mt-2.5">' + ICON.grip + '</span>' +
       '<select data-action="status-change" data-dept="' + dept + '" data-section-idx="' + sIdx + '" data-item-idx="' + iIdx + '" class="text-xs px-2 py-1 rounded-md border ' + cfg.color + ' font-medium cursor-pointer focus:outline-none mt-0.5 no-print" style="appearance:none;-webkit-appearance:none;">' + optionHTML + '</select>' +
-      '<span class="text-xs px-2 py-1 rounded-md border ' + cfg.color + ' font-medium hidden print:inline-block mt-0.5">' + cfg.emoji + ' ' + cfg.label + '</span>' +
       '<p class="flex-1 text-sm text-slate-700 leading-relaxed pt-1"><span contenteditable="true" data-edit="' + prefix + '.text" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(item.text) + '</span></p>' +
-      '<button data-action="delete-item" data-dept="' + dept + '" data-section-idx="' + sIdx + '" data-item-idx="' + iIdx + '" class="opacity-0 group-hover/item:opacity-100 text-slate-300 hover:text-rose-500 transition-all mt-1.5 no-print" title="Eliminar">' + ICON.trash + '</button>' +
+      '<button data-action="delete-item" data-dept="' + dept + '" data-section-idx="' + sIdx + '" data-item-idx="' + iIdx + '" class="opacity-0 group-hover/item:opacity-100 text-slate-300 hover:text-rose-500 mt-1.5 no-print">' + ICON.trash + '</button>' +
     '</li>';
 }
-
 function renderSection(section, idx, dept) {
   var prefix = 'departments.' + dept + '.sections.' + idx;
   var itemsHTML = section.items.length === 0 ? '' :
     '<ul class="space-y-1">' + section.items.map(function(item, i) { return renderItem(item, idx, i, dept); }).join('') + '</ul>';
-
   return '' +
     '<section draggable="true" data-drag-type="section" data-dept="' + dept + '" data-drag-idx="' + idx + '" class="group/sec mb-12 fade-in relative">' +
       '<div class="flex items-baseline gap-3 mb-4">' +
-        '<span class="drag-handle no-print text-slate-400 self-center -ml-6 absolute" title="Arrastrar sección">' + ICON.grip + '</span>' +
+        '<span class="drag-handle no-print text-slate-400 self-center -ml-6 absolute">' + ICON.grip + '</span>' +
         '<span class="text-[11px] text-slate-400 uppercase tracking-[0.2em] font-medium"><span contenteditable="true" data-edit="' + prefix + '.number" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(section.number) + '</span></span>' +
         '<h2 class="text-xl font-semibold text-slate-900 tracking-tight flex-1"><span contenteditable="true" data-edit="' + prefix + '.title" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(section.title) + '</span></h2>' +
-        '<button data-action="delete-section" data-dept="' + dept + '" data-idx="' + idx + '" class="opacity-0 group-hover/sec:opacity-100 text-slate-300 hover:text-rose-500 transition-all no-print" title="Eliminar sección">' + ICON.trash + '</button>' +
+        '<button data-action="delete-section" data-dept="' + dept + '" data-idx="' + idx + '" class="opacity-0 group-hover/sec:opacity-100 text-slate-300 hover:text-rose-500 no-print">' + ICON.trash + '</button>' +
       '</div>' +
       '<div class="text-slate-600 text-sm leading-relaxed mb-5"><p contenteditable="true" data-edit="' + prefix + '.content" class="cursor-text px-1 -mx-1">' + escapeHTML(section.content) + '</p></div>' +
       itemsHTML +
-      '<button data-action="add-item" data-dept="' + dept + '" data-idx="' + idx + '" class="mt-3 text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1.5 transition-colors no-print">' + ICON.plus + ' Añadir punto</button>' +
+      '<button data-action="add-item" data-dept="' + dept + '" data-idx="' + idx + '" class="mt-3 text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1.5 no-print">' + ICON.plus + ' Añadir punto</button>' +
     '</section>';
 }
-
-// ============================================================
-// RENDER: FUNNEL
-// ============================================================
 function renderFunnel(dept) {
   var f = state.departments[dept].funnel;
   if (!f || !f.stages) return '';
-
-  var first = f.stages[0];
-  var last = f.stages[f.stages.length - 1];
-
+  var first = f.stages[0], last = f.stages[f.stages.length - 1];
   var rowsHTML = f.stages.map(function(stage, i) {
     var prev = i > 0 ? f.stages[i - 1] : null;
     var vsAnt = (i === 0) ? '—' : pct(stage.volume, prev.volume);
     var vsTop = (i === 0) ? '—' : pct(stage.volume, first.volume);
     var prefix = 'departments.' + dept + '.funnel.stages.' + i;
-
     return '' +
       '<div draggable="true" data-drag-type="funnel-stage" data-dept="' + dept + '" data-drag-idx="' + i + '" class="group/stage px-6 py-3 grid grid-cols-12 gap-4 items-center border-b border-slate-100 last:border-0">' +
         '<div class="col-span-6 flex items-center gap-2 -ml-1">' +
-          '<span class="drag-handle no-print text-slate-400" title="Arrastrar etapa">' + ICON.grip + '</span>' +
+          '<span class="drag-handle no-print text-slate-400">' + ICON.grip + '</span>' +
           '<span contenteditable="true" data-edit="' + prefix + '.name" class="text-sm text-slate-700 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(stage.name) + '</span>' +
         '</div>' +
-        '<div class="col-span-2 text-right">' +
-          '<span contenteditable="true" data-edit="' + prefix + '.volume" data-numeric="1" class="text-base font-semibold text-slate-900 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(String(stage.volume)) + '</span>' +
-        '</div>' +
+        '<div class="col-span-2 text-right"><span contenteditable="true" data-edit="' + prefix + '.volume" data-numeric="1" class="text-base font-semibold text-slate-900 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(String(stage.volume)) + '</span></div>' +
         '<div class="col-span-2 text-right text-sm text-slate-400">' + vsAnt + '</div>' +
-        '<div class="col-span-2 text-right flex items-center justify-end gap-2">' +
-          '<span class="text-sm text-slate-400">' + vsTop + '</span>' +
-          '<button data-action="delete-funnel-stage" data-dept="' + dept + '" data-idx="' + i + '" class="opacity-0 group-hover/stage:opacity-100 text-slate-300 hover:text-rose-500 transition-all no-print" title="Eliminar etapa">' + ICON.trash + '</button>' +
+        '<div class="col-span-2 text-right flex items-center justify-end gap-2"><span class="text-sm text-slate-400">' + vsTop + '</span>' +
+          '<button data-action="delete-funnel-stage" data-dept="' + dept + '" data-idx="' + i + '" class="opacity-0 group-hover/stage:opacity-100 text-slate-300 hover:text-rose-500 no-print">' + ICON.trash + '</button>' +
         '</div>' +
       '</div>';
   }).join('');
-
   var globalConv = first ? pct(last.volume, first.volume) : '—';
-
   return '' +
     '<div class="max-w-5xl mx-auto px-6 pt-2 pb-6">' +
       '<div class="flex items-center justify-between mb-3">' +
         '<h3 class="text-[11px] uppercase tracking-[0.2em] text-slate-400 font-medium">Pipeline comercial</h3>' +
-        '<button data-action="add-funnel-stage" data-dept="' + dept + '" class="text-[11px] text-slate-400 hover:text-slate-900 transition-colors no-print">+ Añadir</button>' +
+        '<button data-action="add-funnel-stage" data-dept="' + dept + '" class="text-[11px] text-slate-400 hover:text-slate-900 no-print">+ Añadir</button>' +
       '</div>' +
       '<div class="bg-white border border-slate-200 rounded-xl overflow-hidden">' +
         '<div class="px-6 py-2 grid grid-cols-12 gap-4 text-[10px] uppercase tracking-widest text-slate-400 border-b border-slate-200">' +
-          '<div class="col-span-6">Etapa</div>' +
-          '<div class="col-span-2 text-right">Vol.</div>' +
-          '<div class="col-span-2 text-right">vs Ant.</div>' +
-          '<div class="col-span-2 text-right">vs Top</div>' +
-        '</div>' +
-        rowsHTML +
+          '<div class="col-span-6">Etapa</div><div class="col-span-2 text-right">Vol.</div><div class="col-span-2 text-right">vs Ant.</div><div class="col-span-2 text-right">vs Top</div>' +
+        '</div>' + rowsHTML +
         '<div class="px-6 py-3 grid grid-cols-12 gap-4 items-center border-t border-slate-200">' +
           '<div class="col-span-8 text-[11px] uppercase tracking-widest text-slate-400">Valor total pipeline</div>' +
-          '<div class="col-span-4 text-right">' +
-            '<span contenteditable="true" data-edit="departments.' + dept + '.funnel.totalValue" class="text-base font-semibold text-slate-900 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(f.totalValue) + '</span>' +
-          '</div>' +
+          '<div class="col-span-4 text-right"><span contenteditable="true" data-edit="departments.' + dept + '.funnel.totalValue" class="text-base font-semibold text-slate-900 cursor-text px-1 -mx-1 inline-block">' + escapeHTML(f.totalValue) + '</span></div>' +
         '</div>' +
         '<div class="px-6 py-3 grid grid-cols-12 gap-4 items-center border-t border-slate-100">' +
           '<div class="col-span-8 text-[11px] uppercase tracking-widest text-slate-400">Tasa conversión global</div>' +
@@ -693,11 +653,9 @@ function renderFunnel(dept) {
       '</div>' +
     '</div>';
 }
-
 function renderDeptInner(dept) {
   var d = state.departments[dept];
   return '' +
-    '<div class="dept-print-title text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3 mt-8 pb-2 border-b border-slate-200">Departamento · ' + escapeHTML(d.name) + '</div>' +
     '<div class="max-w-5xl mx-auto px-6 py-6">' +
       '<div class="flex items-baseline gap-3 mb-4">' +
         '<span class="text-[11px] text-slate-400 uppercase tracking-[0.2em] font-medium">KPI</span>' +
@@ -706,34 +664,33 @@ function renderDeptInner(dept) {
       '<div class="grid grid-cols-2 md:grid-cols-4 gap-3">' +
         d.kpis.map(function(kpi, i) { return renderKpiCard(kpi, i, dept); }).join('') +
       '</div>' +
-      '<button data-action="add-kpi" data-dept="' + dept + '" class="mt-3 text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1.5 transition-colors no-print">' + ICON.plus + ' Añadir KPI</button>' +
+      '<button data-action="add-kpi" data-dept="' + dept + '" class="mt-3 text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1.5 no-print">' + ICON.plus + ' Añadir KPI</button>' +
     '</div>' +
-    (d.funnel ? renderFunnel(dept) : '<div class="max-w-5xl mx-auto px-6 pb-2"><button data-action="add-funnel" data-dept="' + dept + '" class="text-[11px] text-slate-400 hover:text-slate-900 transition-colors no-print">+ Añadir funnel a esta área</button></div>') +
+    (d.funnel ? renderFunnel(dept) : '<div class="max-w-5xl mx-auto px-6 pb-2"><button data-action="add-funnel" data-dept="' + dept + '" class="text-[11px] text-slate-400 hover:text-slate-900 no-print">+ Añadir funnel</button></div>') +
     '<main class="max-w-5xl mx-auto px-6 py-12">' +
       d.sections.map(function(s, i) { return renderSection(s, i, dept); }).join('') +
-      '<button data-action="add-section" data-dept="' + dept + '" class="mt-4 w-full py-4 border border-dashed border-slate-200 hover:border-slate-300 rounded-lg text-sm text-slate-400 hover:text-slate-700 flex items-center justify-center gap-2 transition-colors no-print">' + ICON.plus + ' Añadir sección</button>' +
+      '<button data-action="add-section" data-dept="' + dept + '" class="mt-4 w-full py-4 border border-dashed border-slate-200 hover:border-slate-300 rounded-lg text-sm text-slate-400 hover:text-slate-700 flex items-center justify-center gap-2 no-print">' + ICON.plus + ' Añadir sección</button>' +
     '</main>';
 }
 
 // ============================================================
-// RENDER: TABS + DEPT AREA
+// TABS
 // ============================================================
 function renderTabsInner() {
   return state.deptOrder.map(function(key) {
     var d = state.departments[key];
     var active = state.activeDept === key;
-    var tabClass = 'group/tab relative flex items-baseline gap-2 px-4 py-4 -mb-px border-b-2 text-sm transition-all whitespace-nowrap select-none cursor-pointer rounded-t-md ' +
+    var tabClass = 'group/tab relative flex items-baseline gap-2 px-4 py-4 -mb-px border-b-2 text-sm whitespace-nowrap select-none cursor-pointer rounded-t-md ' +
       (active ? 'border-slate-900 text-slate-900 font-medium' : 'border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-100/60');
     return '<div draggable="true" data-drag-type="tab" data-drag-key="' + key + '" data-action="set-tab" data-tab="' + key + '" class="' + tabClass + '">' +
-      '<span class="drag-handle no-print text-slate-300" title="Arrastrar pestaña">' + ICON.gripH + '</span>' +
+      '<span class="drag-handle no-print text-slate-300">' + ICON.gripH + '</span>' +
       '<span class="text-[10px] text-slate-400 uppercase tracking-widest"><span contenteditable="true" data-edit="departments.' + key + '.number" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.number) + '</span></span>' +
       '<span><span contenteditable="true" data-edit="departments.' + key + '.name" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(d.name) + '</span></span>' +
-      (state.deptOrder.length > 1 ? '<button data-action="delete-dept" data-key="' + key + '" class="opacity-0 group-hover/tab:opacity-100 text-slate-300 hover:text-rose-500 transition-all ml-1 no-print" title="Eliminar área">' + ICON.trash + '</button>' : '') +
+      (state.deptOrder.length > 1 ? '<button data-action="delete-dept" data-key="' + key + '" class="opacity-0 group-hover/tab:opacity-100 text-slate-300 hover:text-rose-500 ml-1 no-print">' + ICON.trash + '</button>' : '') +
     '</div>';
   }).join('') +
-  '<button data-action="add-dept" class="flex items-center gap-1 px-4 py-4 text-sm text-slate-400 hover:text-slate-900 transition-colors whitespace-nowrap no-print">' + ICON.plus + ' Añadir área</button>';
+  '<button data-action="add-dept" class="flex items-center gap-1 px-4 py-4 text-sm text-slate-400 hover:text-slate-900 whitespace-nowrap no-print">' + ICON.plus + ' Añadir área</button>';
 }
-
 function renderDeptAreaInner() {
   return state.deptOrder.map(function(key) {
     var active = state.activeDept === key;
@@ -742,22 +699,21 @@ function renderDeptAreaInner() {
 }
 
 // ============================================================
-// RENDER: DASHBOARD
+// DASHBOARD
 // ============================================================
 function renderDashboard() {
   $('#root').innerHTML =
     '<div class="min-h-screen bg-[#fafafa]">' +
       '<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 no-print">' +
         '<div class="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">' +
-          '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:opacity-70 transition-opacity">' +
+          '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:opacity-70">' +
             '<div class="w-2.5 h-2.5 rounded-full bg-slate-900"></div>' +
             '<span class="text-sm font-medium text-slate-900 tracking-tight lowercase">esphera</span>' +
             '<span class="text-xs text-slate-400 tracking-tight">.ai</span>' +
           '</a>' +
           '<div class="hidden md:flex items-center gap-3 text-xs text-slate-500">' +
             '<span class="text-slate-300">|</span><span>Weekly Review</span><span class="text-slate-300">|</span>' +
-            '<div class="flex items-center gap-1.5">' +
-              '<div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>' +
+            '<div class="flex items-center gap-1.5"><div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>' +
               '<span contenteditable="true" data-edit="author" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.author) + '</span>' +
             '</div>' +
           '</div>' +
@@ -765,33 +721,31 @@ function renderDashboard() {
             '<div id="save-status" class="hidden sm:flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-slate-400 mr-2">' +
               '<div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div><span>Guardado</span>' +
             '</div>' +
-            '<button data-action="print" class="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md transition-colors">' + ICON.print + '<span class="hidden sm:inline">Exportar PDF</span></button>' +
-            '<button data-action="logout" class="text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 rounded-md transition-colors">Salir</button>' +
+            '<button data-action="snapshot-save" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Guardar versión de esta semana">' + ICON.save + '<span class="hidden sm:inline">Guardar versión</span></button>' +
+            '<button data-action="snapshot-list" class="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md transition-colors" title="Histórico de versiones">' + ICON.archive + '<span class="hidden sm:inline">Histórico</span></button>' +
+            '<button data-action="print" class="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md">' + ICON.print + '<span class="hidden sm:inline">PDF</span></button>' +
+            '<button data-action="logout" class="text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 rounded-md">Salir</button>' +
           '</div>' +
         '</div>' +
       '</header>' +
-
       '<div class="max-w-5xl mx-auto px-6 pt-16 pb-10 fade-in">' +
         '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-3"><span contenteditable="true" data-edit="weekLabel" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.weekLabel) + '</span></div>' +
         '<h1 class="text-5xl md:text-6xl font-semibold text-slate-900 tracking-tight leading-[1.05] mb-4">Weekly <em class="font-serif italic text-slate-700">Business</em> Review</h1>' +
         '<p class="text-base text-slate-500 leading-relaxed max-w-2xl"><span contenteditable="true" data-edit="manifesto" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(state.manifesto) + '</span></p>' +
       '</div>' +
-
       '<div class="border-b border-slate-200 sticky top-[57px] bg-[#fafafa]/90 backdrop-blur-md z-10 no-print">' +
-        '<div id="tab-nav" class="max-w-5xl mx-auto px-6 flex gap-6 overflow-x-auto items-center">' + renderTabsInner() + '</div>' +
+        '<div id="tab-nav" class="max-w-5xl mx-auto px-6 flex gap-2 overflow-x-auto items-center">' + renderTabsInner() + '</div>' +
       '</div>' +
-
       '<div id="dept-area" class="fade-in">' + renderDeptAreaInner() + '</div>' +
-
       '<footer class="max-w-5xl mx-auto px-6 py-12 mt-8 border-t border-slate-100">' +
         '<div class="flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-slate-400">' +
-          '<div class="flex flex-wrap gap-6"><span>Edición en línea</span><span>Drag & drop</span><span>Auto-guardado</span><span>Print: todas las áreas</span></div>' +
-          '<div class="flex items-center gap-4">' +
-            '<button data-action="reset" class="hover:text-rose-500 transition-colors no-print">Restablecer</button>' +
-            '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700 transition-colors">esphera.ai ↗</a>' +
+          '<div class="flex flex-wrap gap-6"><span>Edición en línea</span><span>Drag & drop</span><span>Auto-guardado</span><span>Histórico de versiones</span></div>' +
+          '<div class="flex items-center gap-4"><button data-action="reset" class="hover:text-rose-500 no-print">Restablecer</button>' +
+            '<a href="https://esphera.ai" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700">esphera.ai ↗</a>' +
           '</div>' +
         '</div>' +
       '</footer>' +
+      '<div id="modal-host"></div>' +
     '</div>';
 }
 
@@ -801,15 +755,297 @@ function rerenderDept(dept) {
 }
 function rerenderTabs() { var el = $('#tab-nav'); if (el) el.innerHTML = renderTabsInner(); }
 function rerenderDeptArea() { var el = $('#dept-area'); if (el) el.innerHTML = renderDeptAreaInner(); }
-
 function setActiveDept(key) {
-  state.activeDept = key;
-  save();
-  rerenderTabs();
+  state.activeDept = key; save(); rerenderTabs();
   $$('.dept-content').forEach(function(el) {
-    if (el.dataset.dept === key) el.classList.remove('hidden-soft');
-    else el.classList.add('hidden-soft');
+    if (el.dataset.dept === key) el.classList.remove('hidden-soft'); else el.classList.add('hidden-soft');
   });
+}
+
+// ============================================================
+// PDF EXPORT — Layout dedicado, una página por departamento
+// ============================================================
+function buildPdfPageCover() {
+  return '' +
+    '<div class="pdf-page" style="justify-content:space-between;">' +
+      '<div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:80px;">' +
+          '<div style="width:10px;height:10px;border-radius:50%;background:#0f172a;"></div>' +
+          '<span style="font-size:13px;font-weight:500;color:#0f172a;">esphera</span>' +
+          '<span style="font-size:11px;color:#94a3b8;">.ai</span>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:16px;">' + escapeHTML(state.weekLabel) + '</div>' +
+        '<h1 style="font-size:72px;font-weight:600;color:#0f172a;letter-spacing:-0.02em;line-height:1;margin:0 0 32px 0;">Weekly <em style="font-family:Georgia,serif;font-style:italic;font-weight:400;color:#475569;">Business</em> Review</h1>' +
+        '<p style="font-size:18px;color:#64748b;line-height:1.5;max-width:680px;margin:0;">' + escapeHTML(state.manifesto) + '</p>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:11px;color:#94a3b8;letter-spacing:0.15em;text-transform:uppercase;">' +
+        '<span>Preparado por · ' + escapeHTML(state.author) + '</span>' +
+        '<span>esphera.ai</span>' +
+      '</div>' +
+    '</div>';
+}
+
+function buildPdfPageDept(deptKey) {
+  var d = state.departments[deptKey];
+
+  // KPIs (4 columnas)
+  var kpisHTML = d.kpis.slice(0, 4).map(function(kpi) {
+    var trendColor = kpi.trend === "up" ? "#059669" : "#dc2626";
+    var trendArrow = kpi.trend === "up" ? "▲" : "▼";
+    return '' +
+      '<div style="flex:1;min-width:0;background:white;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;">' +
+        '<div style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px;">' + escapeHTML(kpi.label) + '</div>' +
+        '<div style="font-size:26px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;line-height:1;margin-bottom:6px;">' + escapeHTML(kpi.value) + '</div>' +
+        '<div style="font-size:11px;color:' + trendColor + ';"><span style="margin-right:4px;">' + trendArrow + '</span>' + escapeHTML(kpi.delta) + '<span style="color:#94a3b8;margin-left:6px;">vs sem. ant.</span></div>' +
+      '</div>';
+  }).join('');
+
+  // Funnel (si existe)
+  var funnelHTML = '';
+  if (d.funnel && d.funnel.stages && d.funnel.stages.length > 0) {
+    var first = d.funnel.stages[0], last = d.funnel.stages[d.funnel.stages.length - 1];
+    var globalConv = pct(last.volume, first.volume);
+    var rowsHTML = d.funnel.stages.map(function(stage, i) {
+      var prev = i > 0 ? d.funnel.stages[i - 1] : null;
+      var vsAnt = (i === 0) ? '—' : pct(stage.volume, prev.volume);
+      var vsTop = (i === 0) ? '—' : pct(stage.volume, first.volume);
+      return '' +
+        '<div style="display:grid;grid-template-columns:1fr 60px 60px 60px;gap:12px;padding:7px 16px;border-bottom:1px solid #f1f5f9;font-size:11px;">' +
+          '<div style="color:#334155;">' + escapeHTML(stage.name) + '</div>' +
+          '<div style="text-align:right;font-weight:600;color:#0f172a;">' + escapeHTML(String(stage.volume)) + '</div>' +
+          '<div style="text-align:right;color:#94a3b8;">' + vsAnt + '</div>' +
+          '<div style="text-align:right;color:#94a3b8;">' + vsTop + '</div>' +
+        '</div>';
+    }).join('');
+    funnelHTML = '' +
+      '<div style="margin-bottom:14px;">' +
+        '<div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.2em;margin-bottom:6px;">Pipeline comercial</div>' +
+        '<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">' +
+          '<div style="display:grid;grid-template-columns:1fr 60px 60px 60px;gap:12px;padding:6px 16px;font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.15em;border-bottom:1px solid #e2e8f0;">' +
+            '<div>Etapa</div><div style="text-align:right;">Vol.</div><div style="text-align:right;">vs Ant.</div><div style="text-align:right;">vs Top</div>' +
+          '</div>' + rowsHTML +
+          '<div style="display:grid;grid-template-columns:1fr 100px;gap:12px;padding:7px 16px;border-top:1px solid #e2e8f0;font-size:10px;">' +
+            '<div style="color:#94a3b8;text-transform:uppercase;letter-spacing:0.15em;">Tasa conversión global</div>' +
+            '<div style="text-align:right;font-weight:600;color:#059669;font-size:13px;">' + globalConv + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // Secciones (en columnas)
+  var sectionsHTML = d.sections.map(function(section) {
+    var itemsHTML = section.items.length === 0 ? '' :
+      '<ul style="list-style:none;padding:0;margin:6px 0 0 0;">' +
+      section.items.map(function(item) {
+        var cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG.progress;
+        return '<li style="display:flex;gap:6px;padding:3px 0;font-size:10.5px;color:#475569;line-height:1.45;">' +
+          '<span style="flex-shrink:0;">' + cfg.emoji + '</span>' +
+          '<span>' + escapeHTML(item.text) + '</span>' +
+        '</li>';
+      }).join('') + '</ul>';
+    return '' +
+      '<div style="break-inside:avoid;margin-bottom:10px;">' +
+        '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">' +
+          '<span style="font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.15em;">' + escapeHTML(section.number) + '</span>' +
+          '<h3 style="font-size:13px;font-weight:600;color:#0f172a;margin:0;letter-spacing:-0.01em;">' + escapeHTML(section.title) + '</h3>' +
+        '</div>' +
+        (section.content ? '<p style="font-size:11px;color:#64748b;line-height:1.5;margin:0;">' + escapeHTML(section.content) + '</p>' : '') +
+        itemsHTML +
+      '</div>';
+  }).join('');
+
+  return '' +
+    '<div class="pdf-page">' +
+      // Header
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:16px;border-bottom:1px solid #e2e8f0;margin-bottom:20px;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<div style="width:8px;height:8px;border-radius:50%;background:#0f172a;"></div>' +
+          '<span style="font-size:11px;font-weight:500;color:#0f172a;">esphera</span>' +
+          '<span style="font-size:10px;color:#94a3b8;">.ai</span>' +
+        '</div>' +
+        '<div style="font-size:10px;color:#94a3b8;letter-spacing:0.15em;text-transform:uppercase;">' + escapeHTML(state.weekLabel) + '</div>' +
+      '</div>' +
+      // Title
+      '<div style="display:flex;align-items:baseline;gap:14px;margin-bottom:18px;">' +
+        '<span style="font-size:14px;color:#94a3b8;letter-spacing:0.2em;text-transform:uppercase;font-weight:500;">' + escapeHTML(d.number) + '</span>' +
+        '<h2 style="font-size:32px;font-weight:600;color:#0f172a;margin:0;letter-spacing:-0.02em;">' + escapeHTML(d.name) + '</h2>' +
+      '</div>' +
+      // KPIs row
+      '<div style="display:flex;gap:10px;margin-bottom:18px;">' + kpisHTML + '</div>' +
+      // Funnel + Sections grid
+      (funnelHTML
+        ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;flex:1;overflow:hidden;">' +
+            '<div>' + funnelHTML + '</div>' +
+            '<div>' + sectionsHTML + '</div>' +
+          '</div>'
+        : '<div style="columns:2;column-gap:24px;flex:1;overflow:hidden;">' + sectionsHTML + '</div>') +
+      // Footer
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid #e2e8f0;margin-top:14px;font-size:9px;color:#94a3b8;letter-spacing:0.15em;text-transform:uppercase;">' +
+        '<span>' + escapeHTML(state.author) + '</span>' +
+        '<span>' + escapeHTML(d.name) + '</span>' +
+        '<span>esphera.ai</span>' +
+      '</div>' +
+    '</div>';
+}
+
+function exportPDF() {
+  if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+    alert('No se pudieron cargar las librerías de PDF. Comprueba tu conexión.');
+    return;
+  }
+
+  var btn = document.querySelector('[data-action="print"]');
+  var originalHTML = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = ICON.print + '<span class="hidden sm:inline">Generando…</span>'; }
+
+  // Construir páginas en stage off-screen
+  var stage = $('#pdf-stage');
+  var pagesHTML = buildPdfPageCover();
+  state.deptOrder.forEach(function(deptKey) { pagesHTML += buildPdfPageDept(deptKey); });
+  stage.innerHTML = pagesHTML;
+
+  setTimeout(function() {
+    var pages = stage.querySelectorAll('.pdf-page');
+    var jsPDF = window.jspdf.jsPDF;
+    var pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
+
+    var renderPromises = Array.prototype.map.call(pages, function(page) {
+      return html2canvas(page, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff', windowWidth: 1123, windowHeight: 794 });
+    });
+
+    Promise.all(renderPromises).then(function(canvases) {
+      canvases.forEach(function(canvas, i) {
+        var imgData = canvas.toDataURL('image/jpeg', 0.95);
+        if (i > 0) pdf.addPage('a4', 'landscape');
+        pdf.addImage(imgData, 'JPEG', 0, 0, 297, 210, undefined, 'FAST');
+      });
+      var fileName = 'WBR-' + (state.weekLabel || 'export').replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.pdf';
+      pdf.save(fileName);
+      stage.innerHTML = '';
+      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+    }).catch(function(err) {
+      stage.innerHTML = '';
+      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+      alert('Error al generar el PDF: ' + (err.message || err));
+    });
+  }, 200);
+}
+
+// ============================================================
+// SNAPSHOT MODALS
+// ============================================================
+function openSnapshotSaveModal() {
+  var defaultLabel = state.weekLabel;
+  var modal = $('#modal-host');
+  modal.innerHTML =
+    '<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-6 fade-in">' +
+      '<div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">' +
+        '<div class="flex items-start justify-between mb-4">' +
+          '<div>' +
+            '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-1">Histórico</div>' +
+            '<h2 class="text-xl font-semibold text-slate-900 tracking-tight">Guardar versión</h2>' +
+          '</div>' +
+          '<button data-action="modal-close" class="text-slate-400 hover:text-slate-700">' + ICON.close + '</button>' +
+        '</div>' +
+        '<p class="text-sm text-slate-500 leading-relaxed mb-5">Guarda un snapshot del estado actual del WBR. Podrás restaurarlo en cualquier momento desde el histórico.</p>' +
+        '<div class="mb-4">' +
+          '<label class="text-[11px] text-slate-500 uppercase tracking-widest mb-2 block">Etiqueta</label>' +
+          '<input id="snap-label" type="text" value="' + escapeHTML(defaultLabel) + '" class="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />' +
+        '</div>' +
+        '<div class="flex justify-end gap-2 mt-6">' +
+          '<button data-action="modal-close" class="text-xs px-4 py-2 border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 rounded-md">Cancelar</button>' +
+          '<button data-action="snapshot-confirm-save" class="flex items-center gap-1.5 text-xs px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-md">' + ICON.save + ' Guardar</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  setTimeout(function() { var i = $('#snap-label'); if (i) { i.focus(); i.select(); } }, 50);
+}
+
+function confirmSnapshotSave() {
+  var label = $('#snap-label').value.trim() || state.weekLabel;
+  var snap = createSnapshot(label);
+  closeModal();
+  showToast('Versión guardada: ' + snap.label);
+}
+
+function openSnapshotListModal() {
+  var snapshots = loadSnapshots();
+  var rowsHTML = snapshots.length === 0 ?
+    '<div class="text-center py-12 text-sm text-slate-400">Aún no hay versiones guardadas. Pulsa "Guardar versión" para crear el primer snapshot.</div>' :
+    snapshots.map(function(snap) {
+      return '' +
+        '<div class="group flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50">' +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="text-sm font-medium text-slate-900 truncate">' + escapeHTML(snap.label) + '</div>' +
+            '<div class="text-[11px] text-slate-400 mt-0.5">' + formatDateTime(snap.createdAt) + ' · ' + escapeHTML(snap.author) + '</div>' +
+          '</div>' +
+          '<div class="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">' +
+            '<button data-action="snapshot-export" data-id="' + snap.id + '" class="text-xs px-2.5 py-1.5 text-slate-500 hover:text-slate-900 rounded-md hover:bg-slate-100" title="Descargar JSON">' + ICON.download + '</button>' +
+            '<button data-action="snapshot-restore" data-id="' + snap.id + '" class="text-xs px-3 py-1.5 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 rounded-md">Restaurar</button>' +
+            '<button data-action="snapshot-delete" data-id="' + snap.id + '" class="text-xs p-1.5 text-slate-300 hover:text-rose-500 rounded-md" title="Eliminar">' + ICON.trash + '</button>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+
+  var modal = $('#modal-host');
+  modal.innerHTML =
+    '<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-6 fade-in">' +
+      '<div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">' +
+        '<div class="flex items-start justify-between p-6 pb-4 border-b border-slate-100">' +
+          '<div>' +
+            '<div class="text-[11px] text-slate-400 uppercase tracking-[0.2em] mb-1">Histórico</div>' +
+            '<h2 class="text-xl font-semibold text-slate-900 tracking-tight">Versiones guardadas</h2>' +
+            '<p class="text-xs text-slate-500 mt-1">' + snapshots.length + ' versión' + (snapshots.length === 1 ? '' : 'es') + ' · más reciente arriba</p>' +
+          '</div>' +
+          '<button data-action="modal-close" class="text-slate-400 hover:text-slate-700">' + ICON.close + '</button>' +
+        '</div>' +
+        '<div class="flex-1 overflow-y-auto">' + rowsHTML + '</div>' +
+        '<div class="flex items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 text-[10px] text-slate-400 uppercase tracking-widest">' +
+          '<span>Almacenado en este navegador</span>' +
+          '<button data-action="snapshot-import" class="hover:text-slate-700">Importar JSON</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+function closeModal() {
+  var m = $('#modal-host');
+  if (m) m.innerHTML = '';
+}
+
+function showToast(msg) {
+  var t = document.createElement('div');
+  t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm px-5 py-3 rounded-full shadow-lg fade-in';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function() { t.style.opacity = '0'; t.style.transition = 'opacity 0.3s'; setTimeout(function() { t.remove(); }, 300); }, 2400);
+}
+
+function importSnapshotJSON() {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json';
+  input.onchange = function(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function() {
+      try {
+        var snap = JSON.parse(reader.result);
+        if (!snap.data || !snap.data.departments) throw new Error('Formato no válido');
+        var snapshots = loadSnapshots();
+        snap.id = uid("snap"); // nuevo id para evitar colisiones
+        snapshots.unshift(snap);
+        saveSnapshots(snapshots);
+        showToast('Versión importada');
+        openSnapshotListModal();
+      } catch (err) {
+        alert('Error al importar: ' + err.message);
+      }
+    };
+    reader.readAsText(f);
+  };
+  input.click();
 }
 
 // ============================================================
@@ -818,113 +1054,32 @@ function setActiveDept(key) {
 function deleteKpi(dept, idx)        { state.departments[dept].kpis.splice(idx, 1); save(); rerenderDept(dept); }
 function addKpi(dept)                { state.departments[dept].kpis.push({ id: uid("k"), label: "Nuevo KPI", value: "0", delta: "+0%", trend: "up" }); save(); rerenderDept(dept); }
 function toggleTrend(dept, idx)      { var k = state.departments[dept].kpis[idx]; k.trend = k.trend === "up" ? "down" : "up"; save(); rerenderDept(dept); }
-function deleteSection(dept, idx)    {
-  state.departments[dept].sections.splice(idx, 1);
-  state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); });
-  save(); rerenderDept(dept);
-}
-function addSection(dept)            {
-  var n = pad2(state.departments[dept].sections.length + 1);
-  state.departments[dept].sections.push({ id: uid("s"), number: n, title: "Nueva sección", content: "Descripción…", items: [] });
-  save(); rerenderDept(dept);
-}
+function deleteSection(dept, idx)    { state.departments[dept].sections.splice(idx, 1); state.departments[dept].sections.forEach(function(s, i) { s.number = pad2(i + 1); }); save(); rerenderDept(dept); }
+function addSection(dept)            { var n = pad2(state.departments[dept].sections.length + 1); state.departments[dept].sections.push({ id: uid("s"), number: n, title: "Nueva sección", content: "Descripción…", items: [] }); save(); rerenderDept(dept); }
 function addItem(dept, sIdx)         { state.departments[dept].sections[sIdx].items.push({ id: uid("i"), status: "progress", text: "Nuevo punto…" }); save(); rerenderDept(dept); }
 function deleteItem(dept, sIdx, iIdx){ state.departments[dept].sections[sIdx].items.splice(iIdx, 1); save(); rerenderDept(dept); }
 function changeStatus(dept, sIdx, iIdx, v) { state.departments[dept].sections[sIdx].items[iIdx].status = v; save(); rerenderDept(dept); }
-
-// FUNNEL ACTIONS
-function addFunnel(dept) {
-  state.departments[dept].funnel = {
-    stages: [
-      { id: uid("f"), name: "Demo solicitada", volume: 100 },
-      { id: uid("f"), name: "Cerrado ganado", volume: 0 }
-    ],
-    totalValue: "€0"
-  };
-  save(); rerenderDept(dept);
-}
-function addFunnelStage(dept) {
-  if (!state.departments[dept].funnel) addFunnel(dept);
-  state.departments[dept].funnel.stages.push({ id: uid("f"), name: "Nueva etapa", volume: 0 });
-  save(); rerenderDept(dept);
-}
-function deleteFunnelStage(dept, idx) {
-  state.departments[dept].funnel.stages.splice(idx, 1);
-  save(); rerenderDept(dept);
-}
-
+function addFunnel(dept) { state.departments[dept].funnel = { stages: [{ id: uid("f"), name: "Demo solicitada", volume: 100 },{ id: uid("f"), name: "Cerrado ganado", volume: 0 }], totalValue: "€0" }; save(); rerenderDept(dept); }
+function addFunnelStage(dept) { if (!state.departments[dept].funnel) addFunnel(dept); state.departments[dept].funnel.stages.push({ id: uid("f"), name: "Nueva etapa", volume: 0 }); save(); rerenderDept(dept); }
+function deleteFunnelStage(dept, idx) { state.departments[dept].funnel.stages.splice(idx, 1); save(); rerenderDept(dept); }
 function addDept() {
-  var key = uid("dept");
-  var num = pad2(state.deptOrder.length + 1);
-  state.departments[key] = {
-    name: "Nueva área", number: num,
-    kpis: [{ id: uid("k"), label: "KPI", value: "0", delta: "+0%", trend: "up" }],
-    sections: [{ id: uid("s"), number: "01", title: "Resumen", content: "Descripción…", items: [] }]
-  };
-  state.deptOrder.push(key);
-  state.activeDept = key;
+  var key = uid("dept"); var num = pad2(state.deptOrder.length + 1);
+  state.departments[key] = { name: "Nueva área", number: num, kpis: [{ id: uid("k"), label: "KPI", value: "0", delta: "+0%", trend: "up" }], sections: [{ id: uid("s"), number: "01", title: "Resumen", content: "Descripción…", items: [] }] };
+  state.deptOrder.push(key); state.activeDept = key;
   save(); rerenderTabs(); rerenderDeptArea();
 }
 function deleteDept(key) {
   if (state.deptOrder.length <= 1) return;
-  if (!confirm("¿Eliminar el área '" + state.departments[key].name + "' y todos sus datos?")) return;
+  if (!confirm("¿Eliminar el área '" + state.departments[key].name + "'?")) return;
   delete state.departments[key];
   state.deptOrder = state.deptOrder.filter(function(k) { return k !== key; });
   state.deptOrder.forEach(function(k, i) { state.departments[k].number = pad2(i + 1); });
   if (state.activeDept === key) state.activeDept = state.deptOrder[0];
   save(); rerenderTabs(); rerenderDeptArea();
 }
-
 function resetAll() {
-  if (!confirm("¿Restablecer todos los datos al estado por defecto? Esta acción no se puede deshacer.")) return;
-  state = defaultData();
-  save(); renderDashboard();
-}
-
-// ============================================================
-// EXPORT PDF
-// ============================================================
-function exportPDF() {
-  // Fallback si la librería no cargó (CDN bloqueado, etc.)
-  if (typeof html2pdf === 'undefined') {
-    window.print();
-    return;
-  }
-
-  var btn = document.querySelector('[data-action="print"]');
-  var originalHTML = btn ? btn.innerHTML : '';
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = ICON.print + '<span class="hidden sm:inline">Generando…</span>';
-  }
-
-  var scrollY = window.scrollY;
-  document.body.classList.add('exporting');
-  window.scrollTo(0, 0);
-
-  // Esperar al re-layout antes de capturar
-  setTimeout(function() {
-    var element = document.getElementById('root');
-    var fileName = 'weekly-review-' + new Date().toISOString().slice(0, 10) + '.pdf';
-
-    html2pdf().set({
-      margin:      [10, 12, 10, 12],
-      filename:    fileName,
-      image:       { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 1400 },
-      jsPDF:       { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
-      pagebreak:   { mode: ['css', 'legacy'] }
-    }).from(element).save().then(function() {
-      document.body.classList.remove('exporting');
-      window.scrollTo(0, scrollY);
-      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
-    }).catch(function(err) {
-      document.body.classList.remove('exporting');
-      window.scrollTo(0, scrollY);
-      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
-      alert('Error al generar el PDF: ' + (err.message || err));
-    });
-  }, 150);
+  if (!confirm("¿Restablecer? Esta acción no se puede deshacer (los snapshots guardados no se ven afectados).")) return;
+  state = defaultData(); save(); renderDashboard(); attachEvents();
 }
 
 // ============================================================
@@ -934,33 +1089,29 @@ var eventsAttached = false;
 function attachEvents() {
   if (eventsAttached) return;
   eventsAttached = true;
-  var root = $('#root');
+  var root = document.body;
 
   root.addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action]');
     if (!btn || btn.tagName === 'SELECT') return;
     var action = btn.dataset.action;
 
-    // Tab switching: funciona aunque clic sea sobre un editable.
-    // Si la pestaña ya está activa, dejamos pasar (edición inline).
     if (action === 'set-tab') {
       var tabKey = btn.dataset.tab;
       if (state.activeDept !== tabKey) {
-        if (document.activeElement && typeof document.activeElement.blur === 'function') {
-          document.activeElement.blur();
-        }
+        if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
         setActiveDept(tabKey);
       }
       return;
     }
 
-    // Para el resto de acciones, ignorar clics sobre contenteditable
     if (e.target.closest('[contenteditable="true"]')) return;
 
     var dept = btn.dataset.dept;
     var idx = parseInt(btn.dataset.idx);
     var sIdx = parseInt(btn.dataset.sectionIdx);
     var iIdx = parseInt(btn.dataset.itemIdx);
+    var snapId = btn.dataset.id;
 
     switch (action) {
       case 'delete-kpi':         deleteKpi(dept, idx); break;
@@ -978,6 +1129,22 @@ function attachEvents() {
       case 'print':              exportPDF(); break;
       case 'logout':             logout(); break;
       case 'reset':              resetAll(); break;
+      case 'snapshot-save':      openSnapshotSaveModal(); break;
+      case 'snapshot-confirm-save': confirmSnapshotSave(); break;
+      case 'snapshot-list':      openSnapshotListModal(); break;
+      case 'snapshot-restore':
+        if (confirm('¿Restaurar esta versión? Los datos actuales se sobreescribirán (puedes guardar una versión antes si quieres).')) {
+          restoreSnapshot(snapId); closeModal(); showToast('Versión restaurada');
+        }
+        break;
+      case 'snapshot-delete':
+        if (confirm('¿Eliminar este snapshot definitivamente?')) {
+          deleteSnapshot(snapId); openSnapshotListModal();
+        }
+        break;
+      case 'snapshot-export':    exportSnapshotJSON(snapId); break;
+      case 'snapshot-import':    importSnapshotJSON(); break;
+      case 'modal-close':        closeModal(); break;
     }
   });
 
@@ -992,15 +1159,10 @@ function attachEvents() {
     if (!el) return;
     var path = el.dataset.edit;
     var value = el.innerText.trim();
-
-    // Numeric fields (funnel volumes)
     if (el.dataset.numeric === "1" || /\.funnel\.stages\.\d+\.volume$/.test(path)) {
       value = parseInt(String(value).replace(/[^0-9-]/g, '')) || 0;
     }
-
     setStateAt(path, value);
-
-    // Recompute funnel percentages on edit
     if (path.indexOf('.funnel.') !== -1) {
       var m = path.match(/^departments\.([^.]+)\./);
       if (m) rerenderDept(m[1]);
@@ -1009,9 +1171,9 @@ function attachEvents() {
 
   root.addEventListener('keydown', function(e) {
     if (e.key === 'Enter' && e.target.matches && e.target.matches('span[data-edit]')) {
-      e.preventDefault();
-      e.target.blur();
+      e.preventDefault(); e.target.blur();
     }
+    if (e.key === 'Escape') closeModal();
   });
 
   root.addEventListener('dragstart', dragStart);
@@ -1024,14 +1186,9 @@ function attachEvents() {
 // ROOT
 // ============================================================
 function renderRoot() {
-  if (!isAuthed()) {
-    renderLogin();
-  } else {
-    renderDashboard();
-    attachEvents();
-  }
+  if (!isAuthed()) renderLogin();
+  else { renderDashboard(); attachEvents(); }
 }
-
 window.__appLoaded = true;
 renderRoot();
 </script>
