@@ -462,10 +462,10 @@ function defaultData() {
       marketing: {
         name: "Marketing", number: "02",
         kpis: [
-          { id: uid("k"), label: "Leads",      value: "247",   delta: "+18%",  trend: "up" },
-          { id: uid("k"), label: "MQLs",       value: "62",    delta: "+8",    trend: "up" },
-          { id: uid("k"), label: "CAC",        value: "€78",   delta: "-€12",  trend: "up" },
-          { id: uid("k"), label: "Sesiones",   value: "12.4k", delta: "+5%",   trend: "up" }
+          { id: uid("k"), label: "Leads",      value: "247",   delta: "+18%",  trend: "up", sentiment: "positive" },
+          { id: uid("k"), label: "MQLs",       value: "62",    delta: "+8",    trend: "up", sentiment: "positive" },
+          { id: uid("k"), label: "CAC",        value: "€78",   delta: "-€12",  trend: "down", sentiment: "positive" },
+          { id: uid("k"), label: "Sesiones",   value: "12.4k", delta: "+5%",   trend: "up", sentiment: "positive" }
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen",
@@ -488,10 +488,10 @@ function defaultData() {
       finanzas: {
         name: "Finanzas", number: "03",
         kpis: [
-          { id: uid("k"), label: "Revenue mes", value: "€58.5k", delta: "+9%",   trend: "up" },
-          { id: uid("k"), label: "Burn rate",   value: "€42k",   delta: "-€3k",  trend: "up" },
-          { id: uid("k"), label: "Runway",      value: "14m",    delta: "+1m",   trend: "up" },
-          { id: uid("k"), label: "Margen bruto",value: "72%",    delta: "+2pp",  trend: "up" }
+          { id: uid("k"), label: "Revenue mes", value: "€58.5k", delta: "+9%",   trend: "up", sentiment: "positive" },
+          { id: uid("k"), label: "Burn rate",   value: "€42k",   delta: "-€3k",  trend: "down", sentiment: "positive" },
+          { id: uid("k"), label: "Runway",      value: "14m",    delta: "+1m",   trend: "up", sentiment: "positive" },
+          { id: uid("k"), label: "Margen bruto",value: "72%",    delta: "+2pp",  trend: "up", sentiment: "positive" }
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen",
@@ -513,10 +513,10 @@ function defaultData() {
       tecnologia: {
         name: "Tecnología", number: "04",
         kpis: [
-          { id: uid("k"), label: "Uptime",      value: "99.94%", delta: "+0.02pp", trend: "up" },
-          { id: uid("k"), label: "Velocidad",   value: "38 SP",  delta: "+4",      trend: "up" },
-          { id: uid("k"), label: "Bugs abiertos", value: "12",   delta: "-3",      trend: "up" },
-          { id: uid("k"), label: "Deploys",     value: "8",      delta: "+2",      trend: "up" }
+          { id: uid("k"), label: "Uptime",      value: "99.94%", delta: "+0.02pp", trend: "up", sentiment: "positive" },
+          { id: uid("k"), label: "Velocidad",   value: "38 SP",  delta: "+4",      trend: "up", sentiment: "positive" },
+          { id: uid("k"), label: "Bugs abiertos", value: "12",   delta: "-3",      trend: "down", sentiment: "positive" },
+          { id: uid("k"), label: "Deploys",     value: "8",      delta: "+2",      trend: "up", sentiment: "positive" }
         ],
         sections: [
           { id: uid("s"), number: "01", title: "Resumen",
@@ -884,7 +884,10 @@ function renderUserOnboarding() {
 // RENDER: KPI / SECTION / ITEM (en pantalla)
 // ============================================================
 function renderKpiCard(kpi, idx, dept) {
-  var trendColor = kpi.trend === "up" ? "text-emerald-600" : "text-rose-600";
+  // sentiment: "positive" o "negative" — define si la tendencia actual es buena o mala
+  // Por compatibilidad con datos antiguos, si no existe, se calcula automáticamente: up=positive, down=negative
+  var sentiment = kpi.sentiment || (kpi.trend === "up" ? "positive" : "negative");
+  var trendColor = sentiment === "positive" ? "text-emerald-600" : "text-rose-600";
   var trendIcon = kpi.trend === "up" ? ICON.chevUp : ICON.chevDown;
   var prefix = 'departments.' + dept + '.kpis.' + idx;
   return '' +
@@ -894,8 +897,11 @@ function renderKpiCard(kpi, idx, dept) {
       '<div class="text-[10px] uppercase tracking-widest text-slate-400 mb-2 mt-3"><span contenteditable="true" data-edit="' + prefix + '.label" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.label) + '</span></div>' +
       '<div class="text-2xl font-semibold text-slate-900 tracking-tight mb-1"><span contenteditable="true" data-edit="' + prefix + '.value" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.value) + '</span></div>' +
       '<div class="flex items-center gap-1.5 text-xs">' +
-        '<button data-action="toggle-trend" data-dept="' + dept + '" data-idx="' + idx + '" class="' + trendColor + ' no-print">' + trendIcon + '</button>' +
+        '<button data-action="toggle-trend" data-dept="' + dept + '" data-idx="' + idx + '" class="' + trendColor + ' no-print" title="Cambiar dirección de la flecha">' + trendIcon + '</button>' +
         '<span class="' + trendColor + '"><span contenteditable="true" data-edit="' + prefix + '.delta" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.delta) + '</span></span>' +
+        '<button data-action="toggle-sentiment" data-dept="' + dept + '" data-idx="' + idx + '" class="ml-1 text-slate-300 hover:text-slate-600 no-print" title="Esto es ' + (sentiment === "positive" ? "positivo" : "negativo") + ' (click para cambiar)">' +
+          (sentiment === "positive" ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>') +
+        '</button>' +
         '<span class="text-slate-400">vs sem. ant.</span>' +
       '</div>' +
     '</div>';
@@ -1455,6 +1461,13 @@ function deleteKpi(dept, idx) {
 }
 function addKpi(dept) { state.departments[dept].kpis.push({ id: uid("k"), label: "Nuevo KPI", value: "0", delta: "+0%", trend: "up" }); save(); rerenderDept(dept); }
 function toggleTrend(dept, idx) { var k = state.departments[dept].kpis[idx]; k.trend = k.trend === "up" ? "down" : "up"; save(); rerenderDept(dept); }
+function toggleSentiment(dept, idx) {
+  var k = state.departments[dept].kpis[idx];
+  // Si no tenía sentiment, lo inicializamos según la lógica antigua (up=positive)
+  var current = k.sentiment || (k.trend === "up" ? "positive" : "negative");
+  k.sentiment = current === "positive" ? "negative" : "positive";
+  save(); rerenderDept(dept);
+}
 function deleteSection(dept, idx) {
   openDestructiveModal({
     title: 'Eliminar sección',
@@ -1630,6 +1643,7 @@ function attachEvents() {
       case 'delete-kpi':         deleteKpi(dept, idx); break;
       case 'add-kpi':            addKpi(dept); break;
       case 'toggle-trend':       toggleTrend(dept, idx); break;
+      case 'toggle-sentiment':   toggleSentiment(dept, idx); break;
       case 'delete-section':     deleteSection(dept, idx); break;
       case 'add-section':        addSection(dept); break;
       case 'add-item':           addItem(dept, idx); break;
