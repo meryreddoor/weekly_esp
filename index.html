@@ -884,12 +884,10 @@ function renderUserOnboarding() {
 // RENDER: KPI / SECTION / ITEM (en pantalla)
 // ============================================================
 function renderKpiCard(kpi, idx, dept) {
-  // sentiment: "positive" o "negative" — define si la tendencia actual es buena o mala
-  // Por compatibilidad con datos antiguos, si no existe, se calcula automáticamente: up=positive, down=negative
   var sentiment = kpi.sentiment || (kpi.trend === "up" ? "positive" : "negative");
   var trendColor = sentiment === "positive" ? "text-emerald-600" : "text-rose-600";
-  var trendIcon = kpi.trend === "up" ? ICON.chevUp : ICON.chevDown;
   var prefix = 'departments.' + dept + '.kpis.' + idx;
+
   return '' +
     '<div draggable="true" data-drag-type="kpi" data-dept="' + dept + '" data-drag-idx="' + idx + '" class="group relative bg-white border border-slate-200 rounded-xl p-5 hover:shadow-sm transition-shadow">' +
       '<div class="absolute top-2 left-2 drag-handle no-print text-slate-400" title="Arrastrar">' + ICON.grip + '</div>' +
@@ -897,12 +895,9 @@ function renderKpiCard(kpi, idx, dept) {
       '<div class="text-[10px] uppercase tracking-widest text-slate-400 mb-2 mt-3"><span contenteditable="true" data-edit="' + prefix + '.label" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.label) + '</span></div>' +
       '<div class="text-2xl font-semibold text-slate-900 tracking-tight mb-1"><span contenteditable="true" data-edit="' + prefix + '.value" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.value) + '</span></div>' +
       '<div class="flex items-center gap-1.5 text-xs">' +
-        '<button data-action="toggle-trend" data-dept="' + dept + '" data-idx="' + idx + '" class="' + trendColor + ' no-print" title="Cambiar dirección de la flecha">' + trendIcon + '</button>' +
-        '<span class="' + trendColor + '"><span contenteditable="true" data-edit="' + prefix + '.delta" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.delta) + '</span></span>' +
-        '<button data-action="toggle-sentiment" data-dept="' + dept + '" data-idx="' + idx + '" class="ml-1 text-slate-300 hover:text-slate-600 no-print" title="Esto es ' + (sentiment === "positive" ? "positivo" : "negativo") + ' (click para cambiar)">' +
-          (sentiment === "positive" ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>') +
-        '</button>' +
-        '<span class="text-slate-400">vs sem. ant.</span>' +
+        '<span class="' + trendColor + ' font-medium"><span contenteditable="true" data-edit="' + prefix + '.delta" class="cursor-text px-1 -mx-1 inline-block">' + escapeHTML(kpi.delta) + '</span></span>' +
+        '<button data-action="toggle-sentiment" data-dept="' + dept + '" data-idx="' + idx + '" class="ml-1 w-3 h-3 rounded-full ' + (sentiment === "positive" ? "bg-emerald-500 hover:bg-emerald-600" : "bg-rose-500 hover:bg-rose-600") + ' cursor-pointer transition-colors no-print" title="Cambiar color (verde ↔ rojo)"></button>' +
+        '<span class="text-slate-400 ml-1">vs sem. ant.</span>' +
       '</div>' +
     '</div>';
 }
@@ -1460,12 +1455,26 @@ function deleteKpi(dept, idx) {
   });
 }
 function addKpi(dept) { state.departments[dept].kpis.push({ id: uid("k"), label: "Nuevo KPI", value: "0", delta: "+0%", trend: "up" }); save(); rerenderDept(dept); }
-function toggleTrend(dept, idx) { var k = state.departments[dept].kpis[idx]; k.trend = k.trend === "up" ? "down" : "up"; save(); rerenderDept(dept); }
+function toggleTrend(dept, idx) {
+  var k = state.departments[dept].kpis[idx];
+  k.trend = k.trend === "up" ? "down" : "up";
+  save(); rerenderDept(dept);
+}
 function toggleSentiment(dept, idx) {
   var k = state.departments[dept].kpis[idx];
-  // Si no tenía sentiment, lo inicializamos según la lógica antigua (up=positive)
-  var current = k.sentiment || (k.trend === "up" ? "positive" : "negative");
-  k.sentiment = current === "positive" ? "negative" : "positive";
+  // Resolver sentiment actual (con compatibilidad retroactiva)
+  var current = k.sentiment;
+  if (current !== "positive" && current !== "negative") {
+    current = (k.trend === "up") ? "positive" : "negative";
+  }
+  // Toggle explícito
+  k.sentiment = (current === "positive") ? "negative" : "positive";
+  save();
+  rerenderDept(dept);
+}
+function setSentiment(dept, idx, value) {
+  var k = state.departments[dept].kpis[idx];
+  k.sentiment = value;
   save(); rerenderDept(dept);
 }
 function deleteSection(dept, idx) {
@@ -1644,6 +1653,7 @@ function attachEvents() {
       case 'add-kpi':            addKpi(dept); break;
       case 'toggle-trend':       toggleTrend(dept, idx); break;
       case 'toggle-sentiment':   toggleSentiment(dept, idx); break;
+      case 'set-sentiment':      setSentiment(dept, idx, btn.dataset.sentiment); break;
       case 'delete-section':     deleteSection(dept, idx); break;
       case 'add-section':        addSection(dept); break;
       case 'add-item':           addItem(dept, idx); break;
